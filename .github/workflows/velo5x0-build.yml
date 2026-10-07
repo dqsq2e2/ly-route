@@ -74,7 +74,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mmdebstrap debian-archive-keyring zstd ca-certificates build-essential cmake dpkg-dev git curl gdisk parted dosfstools rsync grub-pc-bin grub-efi-amd64-bin shim-signed e2fsprogs util-linux xorriso isolinux syslinux-common mtools qemu-system-x86
           curl -fsSL https://deb.debian.org/debian/pool/main/l/live-build/live-build_20230502_all.deb -o /tmp/live-build.deb
-          sudo dpkg -i /tmp/live-build.deb
+          sudo apt-get install -y /tmp/live-build.deb
           bash scripts/dev-hotfix-check.sh ./cmd/... ./internal/httpapi
           (cd backend && go test ./internal/httpapi -run '^TestFan')
           python3 scripts/test-velo5x0-hardware.py
