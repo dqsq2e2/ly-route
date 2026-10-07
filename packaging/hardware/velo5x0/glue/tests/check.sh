@@ -23,6 +23,37 @@ expect_failure --package-version 6.18.55-1 --check
 expect_failure --check --config-only
 printf 'Builder syntax, pinned CLI and offline checks passed.\n'
 
+# Use real ELF module metadata to check the combined DSA/EDSA package contract.
+eval "$(awk '
+  /^die\(\)/ {print}
+  /^check_packaged_modules\(\) \{/ {copy=1}
+  copy {print}
+  copy && /^}/ {exit}
+' "$builder")"
+module_root=$work/modules
+mkdir -p "$module_root/kernel/net/dsa"
+for module in igb mdio-gpio mv88e6xxx vc-edge5x0-mdio vc-edge5x0-dsa; do
+  touch "$module_root/$module.ko"
+done
+tagger=$module_root/kernel/net/dsa/tag_dsa.ko
+"${CC:-gcc}" -c "$tests_dir/tagger-module.c" -o "$tagger"
+check_packaged_modules "$module_root"
+expect_module_failure() {
+  if (check_packaged_modules "$module_root") >"$work/stdout" 2>"$work/stderr"; then
+    printf 'package accepted missing module/tagger: %s\n' "$1" >&2
+    exit 1
+  fi
+  grep -Fq "$1" "$work/stderr"
+}
+"${CC:-gcc}" -DTEST_OMIT_EDSA -c "$tests_dir/tagger-module.c" -o "$tagger"
+expect_module_failure 'tag_dsa module lacks edsa support'
+"${CC:-gcc}" -DTEST_OMIT_DSA -c "$tests_dir/tagger-module.c" -o "$tagger"
+expect_module_failure 'tag_dsa module lacks dsa support'
+"${CC:-gcc}" -c "$tests_dir/tagger-module.c" -o "$tagger"
+rm "$module_root/igb.ko"
+expect_module_failure 'required module absent from package: igb'
+printf 'Package checks: combined DSA/EDSA module accepted; missing protocols/modules rejected.\n'
+
 # Exercise the actual generated maintainer template with a private fake boot root.
 eval "$(awk '/^emit_maint_script\(\) \{/ {copy=1} copy {print} copy && /^}/ {exit}' "$builder")"
 kernel_release=6.18.54-velo5x0

@@ -97,6 +97,20 @@ fi
 EOF
 }
 
+check_packaged_modules() {
+  local module_root=$1 module aliases protocol
+  for module in igb mdio-gpio mv88e6xxx tag_dsa vc-edge5x0-mdio vc-edge5x0-dsa; do
+    [ -n "$(find "$module_root" -type f -name "$module.ko" -print -quit)" ] ||
+      die "required module absent from package: $module"
+  done
+  # Linux 6.18 builds both DSA and EDSA taggers into tag_dsa.ko.
+  aliases=$(modinfo -F alias "$module_root/kernel/net/dsa/tag_dsa.ko")
+  for protocol in dsa edsa; do
+    grep -Fxq "dsa_tag:$protocol" <<<"$aliases" ||
+      die "tag_dsa module lacks $protocol support"
+  done
+}
+
 check_fragment() {
   awk '
     /^[[:space:]]*$/ { next }
@@ -166,7 +180,7 @@ fi
 [ "${ID:-}" = debian ] && [ "${VERSION_CODENAME:-}" = bookworm ] ||
   die "run in a Debian Bookworm build environment (no automatic system changes)"
 for tool in curl tar xz patch make gcc ld flex bison bc perl pkg-config dpkg dpkg-deb \
-  dpkg-architecture depmod install find sort touch date mktemp xargs du head; do
+  dpkg-architecture depmod modinfo install find sort touch date mktemp xargs du head; do
   require_command "$tool"
 done
 [ "$(dpkg --print-architecture)" = amd64 ] || die "only native amd64 builds are supported"
@@ -258,10 +272,7 @@ kmake M="$glue_dir" INSTALL_MOD_PATH="$package_root" INSTALL_MOD_STRIP=1 \
 # Do not ship absolute links to the private build/source directories.
 rm -f "$module_root/build" "$module_root/source"
 depmod -b "$package_root" -F "$build_dir/System.map" "$kernel_release" >&2
-for module in igb mdio-gpio mv88e6xxx tag_dsa tag_edsa vc-edge5x0-mdio vc-edge5x0-dsa; do
-  [ -n "$(find "$module_root" -type f -name "$module.ko" -print -quit)" ] ||
-    die "required module absent from package: $module"
-done
+check_packaged_modules "$module_root"
 install -m 0644 "$build_dir/arch/x86/boot/bzImage" "$package_root/boot/vmlinuz-$kernel_release"
 install -m 0644 "$build_dir/.config" "$package_root/boot/config-$kernel_release"
 install -m 0644 "$build_dir/System.map" "$package_root/boot/System.map-$kernel_release"

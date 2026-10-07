@@ -57,6 +57,10 @@ package. The package also includes `/boot/vmlinuz-6.18.54-velo5x0`,
 kernel modules, builtin metadata and depmod indexes. Private build/source
 symlinks are removed.
 
+Linux 6.18 provides both DSA and EDSA protocols through `tag_dsa.ko`, not a
+separate `tag_edsa.ko`. Package checks require both protocol aliases in that
+module as well as the board drivers.
+
 `Depends: kmod, initramfs-tools, linux-base (>= 4.5), debianutils`;
 `Recommends: firmware-atheros`; `Provides: linux-image`.
 On configure, the package runs depmod, creates or updates its initrd explicitly,
