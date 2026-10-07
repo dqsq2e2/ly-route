@@ -119,6 +119,7 @@ jobs:
           sudo --preserve-env=LY_ROUTE_MIRROR env LY_ROUTE_EXTRA_DEBS_DIR="$PWD/runtime-debs" ./scripts/build-rootfs.sh --product gateway --arch amd64 --hardware velo5x0 --out dist/rootfs
           sudo --preserve-env=LY_ROUTE_MIRROR,LY_ROUTE_SECURITY_MIRROR env LY_ROUTE_KERNEL_DEBS_DIR="$PWD/kernel-debs" ./scripts/build-disk-image.sh --product gateway --hardware velo5x0 --rootfs dist/rootfs/ly-route-rootfs-gateway-bookworm-amd64.tar.zst --out dist/disk --size 4G
           sudo --preserve-env=LY_ROUTE_MIRROR,LY_ROUTE_SECURITY_MIRROR env LY_ROUTE_KERNEL_DEBS_DIR="$PWD/kernel-debs" ./scripts/build-auto-install-iso.sh --product gateway --hardware velo5x0 --image dist/disk/ly-route-gateway-bookworm-amd64-4g.img.zst --out dist/iso
+          sudo chown -R "$USER:$USER" dist
           cd dist/iso
           sha256sum -c ly-route-gateway-velo5x0-x86_64-installer.iso.sha256
           xorriso -indev ly-route-gateway-velo5x0-x86_64-installer.iso -report_system_area plain -report_el_torito plain
