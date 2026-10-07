@@ -27,6 +27,7 @@ const sections = [
   { id: 'system', no: '06', title: '系统维护', pages: [
     ['system/webuser_main', '用户管理', 'table'],
     ['system/sys_config', '配置管理', 'settings'],
+    ['system/fan', '温度控制', 'fan'],
   ]}
 ];
 
@@ -58,6 +59,12 @@ el.userDrawer = document.getElementById('userDrawer');
 el.userDrawerTitle = document.getElementById('userDrawerTitle');
 el.userDrawerBody = document.getElementById('userDrawerBody');
 el.userDrawerClose = document.getElementById('userDrawerClose');
+
+const gatewayFan = window.LyRouteGatewayFan.create({
+  apiJSON, safeText, toast,
+  isReadonly: () => state.session?.role !== 'admin',
+  onAvailability: () => renderMenu()
+});
 
 function escapeAttr(value) { return safeText(value); }
 function currentPage() { return pageMap.get(state.active) || pageMap.values().next().value; }
@@ -155,7 +162,9 @@ function isNetworkContentPage(page) { return Boolean(networkPages[page.id]); }
 function renderMenu() {
   const q = state.query.trim().toLowerCase();
   el.sideMenu.innerHTML = sections.map((section) => {
-    const pages = section.pages.map((raw) => pageMap.get(raw[0])).filter((page) => !q || `${section.title} ${page.title} ${page.id}`.toLowerCase().includes(q));
+    const pages = section.pages.map((raw) => pageMap.get(raw[0]))
+      .filter((page) => page.id !== 'system/fan' || gatewayFan.isAvailable() !== false)
+      .filter((page) => !q || `${section.title} ${page.title} ${page.id}`.toLowerCase().includes(q));
     if (!pages.length) return '';
     const hasActivePage = pages.some((page) => page.id === state.active);
     const collapsed = state.collapsedSections.has(section.id) && !q;
@@ -198,6 +207,12 @@ function openPage(id, updateLocation = true) {
 }
 function renderWorkspace() {
   const page = currentPage();
+  el.appShell.classList.toggle('fan-workspace-active', page.id === 'system/fan');
+  if (page.id === 'system/fan' && gatewayFan.isMounted()) {
+    gatewayFan.update();
+    return;
+  }
+  gatewayFan.unmount();
   const objectDisplay = isObjectDisplayPage(page);
   const cardClass = `page-card${objectDisplay ? ' object-display-page' : ''}`;
   const bodyClass = page.type === 'dashboard' ? 'page-body' : `page-body list-page${objectDisplay ? ' object-display-page' : ''}`;
@@ -230,6 +245,7 @@ function capabilityItems() {
   });
 }
 function renderPageBody(page) {
+  if (page.id === 'system/fan') return gatewayFan.render();
   if (page.type === 'dashboard') return renderDashboard();
   if (page.type === 'system-overview') return gatewayOverview.renderSystem({ summary: state.controlPlane.telemetry.dashboardSummary || state.controlPlane.telemetry.dashboard, onlineUsers: state.controlPlane.telemetry.onlineUsers, trafficTrend: state.controlPlane.telemetry.trafficTrend, resources: state.controlPlane.resources, runtime: state.controlPlane.runtimeStatus, health: state.controlPlane.health, escape: safeText });
   if (page.type === 'runtime') return renderRuntimeOperationsHtml();
@@ -1467,6 +1483,10 @@ function tableColumns(page) {
   return ['名称', '对象/参数', '命中/流量', '备注'];
 }
 function wireWorkspaceEvents(page) {
+  if (page.id === 'system/fan') {
+    gatewayFan.mount(el.workspace.querySelector('[data-fan-page]'));
+    return;
+  }
   el.workspace.querySelectorAll('[data-tab-index]').forEach((button) => button.addEventListener('click', () => { state.activeTabs[page.id] = Number(button.dataset.tabIndex); state.checkedRows.clear(); renderWorkspace(); }));
   el.workspace.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => handleAction(button.dataset.action, page)));
   if (page.type === 'dashboard' && state.trafficRenderOptions) gatewayOverview.wireTraffic(el.workspace, state.trafficRenderOptions, {
@@ -3042,6 +3062,8 @@ function setLoginHint(message = defaultLoginHint) {
 }
 function showLogin(message = defaultLoginHint) {
   stopAutoRefresh();
+  gatewayFan.stop();
+  state.session = null;
   el.appShell.classList.add('is-hidden');
   el.loginScreen.classList.remove('is-hidden');
   setLoginHint(message);
@@ -3051,6 +3073,7 @@ function showShell() {
   el.appShell.classList.remove('is-hidden');
   setLoginHint();
   if (!window.location.hash) gatewayRouting.navigate(state.active, true);
+  gatewayFan.start();
   render();
   void refreshSystemSummaryFast();
   void refreshPPPoEStatusFast();
@@ -3096,6 +3119,7 @@ async function refreshWanOverviewFast() {
 
 function showPasswordChange(currentPassword = '') {
   stopAutoRefresh();
+  gatewayFan.stop();
   el.appShell.classList.add('is-hidden');
   el.loginScreen.classList.remove('is-hidden');
   setLoginHint('首次登录必须修改管理员密码。');
@@ -3127,7 +3151,7 @@ async function submitPasswordChange() {
     if (!response.ok) { toast(response.status === 422 ? '新密码不符合要求' : '修改密码失败'); return; }
     closeModal(true);
     toast('密码已修改');
-    showShell();
+    await loadSession();
   } catch (error) {
     toast('无法连接认证服务');
   }
@@ -3445,6 +3469,7 @@ async function loadSession() {
     const response = await authFetch(authApi.session, { method: 'GET' });
     if (response.ok) {
       const payload = await response.json();
+      state.session = payload.session || payload;
       if (payload.password_change_required || payload.session?.password_change_required) { showPasswordChange(); return; }
       showShell();
       return;
@@ -3467,6 +3492,7 @@ async function submitLogin(event) {
     });
     if (response.ok) {
       const payload = await response.json();
+      state.session = payload.session || payload;
       if (payload.password_change_required || payload.session?.password_change_required) { showPasswordChange(password); return; }
       showShell();
       return;

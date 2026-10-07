@@ -32,3 +32,33 @@ the disk, management NIC and static address; the default is
 the board kernel, DTB, bootloader and `/boot`. Sign in as `admin` / `password`
 and change the password on first login. Never apply an upgrade for another CPU
 architecture.
+
+## VeloCloud Edge 5x0
+
+The `5x0` branch has a separate `VeloCloud Edge 5x0 installer` workflow. Its
+artifact is `ly-route-gateway-velo5x0-x86_64-installer.iso`; it does not replace
+the generic x86 release. The profile is selected explicitly with
+`--hardware velo5x0` on the rootfs, disk-image and ISO builders.
+
+Write this hybrid ISO to the entire USB device in raw/DD mode, not as a file
+inside a FAT partition. Connect the board console at 115200 baud, 8N1.
+The GRUB menu, kernel and interactive installer all use `ttyS1` (COM10 on the
+current workstation). Select the internal target disk and management jack,
+then confirm formatting. The USB installation medium is excluded from target
+selection. Remove it before the final reboot because the board boots USB first.
+
+The profile includes a pinned, patched Linux 6.18.54 kernel, WAN MDIO glue,
+two independent DSA LAN switches, the TI USB-controller quirk, iTCO watchdog
+feeding and temperature control. System maintenance > Temperature control
+provides manual PWM, automatic temperature curves and live CPU/WiFi/board
+readings. The default follows the highest CPU temperature: stop at or below
+42 C, start at 45 C with 16% PWM, and ramp to full speed at 60 C. These defaults
+match the existing LuCI adaptation. Other temperature sources, a four-point
+curve and the low-temperature PWM are configurable. PWM passthrough is
+PCA9557 pin 6 high, pin 7 low. The stop state
+uses the board chopper; unrelated PoE and mini-PCIe control bits are preserved.
+
+The I354 board-specific ports remain Linux-owned. The installer does not
+offer them to a generic DPDK driver. DSA data-plane qualification is still
+required separately; boot/install verification does not establish VPP
+performance or full port functionality on physical hardware.

@@ -23,7 +23,8 @@ printf '%s\n' '==> source whitespace check'
 # Unified-diff patch files contain a leading context marker by design; checking
 # their embedded source indentation as ordinary working-tree whitespace gives
 # false positives. The patched C/VPP sources themselves are checked normally.
-git diff --check -- . ':(exclude)packaging/vpp-patches/*.patch'
+git diff --check -- . ':(exclude)packaging/vpp-patches/*.patch' \
+  ':(exclude)packaging/hardware/velo5x0/patches/*.patch'
 
 printf '%s\n' '==> shell syntax check'
 shell_files=$(mktemp)

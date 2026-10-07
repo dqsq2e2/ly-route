@@ -3,7 +3,7 @@ set -eu
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build-rootfs.sh --product gateway|orchestrator [--arch amd64|arm64] [--suite bookworm] [--out dist/rootfs] [--manifest PATH] [--frontend-bundle DIRECTORY]
+Usage: scripts/build-rootfs.sh --product gateway|orchestrator [--arch amd64|arm64] [--suite bookworm] [--out dist/rootfs] [--hardware velo5x0] [--manifest PATH] [--frontend-bundle DIRECTORY]
 
 Builds a product-specific Debian-based Ly Route rootfs.
 
@@ -25,6 +25,7 @@ arch=amd64
 suite=bookworm
 out_dir=dist/rootfs
 product=
+hardware=
 manifest=
 frontend_bundle=
 mirror=${LY_ROUTE_MIRROR:-http://deb.debian.org/debian}
@@ -36,7 +37,7 @@ vpp_apply_binary=${LY_ROUTE_VPP_APPLY_BINARY:-}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --arch|--suite|--out|--product|--manifest|--frontend-bundle)
+    --arch|--suite|--out|--product|--hardware|--manifest|--frontend-bundle)
       option=$1
       [ "$#" -ge 2 ] && [ -n "$2" ] || { echo "$option requires a value" >&2; exit 2; }
       case "$option" in
@@ -44,6 +45,7 @@ while [ "$#" -gt 0 ]; do
         --suite) suite=$2 ;;
         --out) out_dir=$2 ;;
         --product) product=$2 ;;
+        --hardware) hardware=$2 ;;
         --manifest) manifest=$2 ;;
         --frontend-bundle) frontend_bundle=$2 ;;
       esac
@@ -63,8 +65,16 @@ case "$arch" in
   amd64|arm64) ;;
   *) echo "Unsupported architecture: $arch" >&2; exit 2 ;;
 esac
+case "$hardware" in
+  "") ;;
+  velo5x0)
+    [ "$arch,$product" = amd64,gateway ] || { echo "velo5x0 requires the amd64 gateway product" >&2; exit 2; }
+    ;;
+  *) echo "Unsupported hardware: $hardware" >&2; exit 2 ;;
+esac
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$repo_root/scripts/lib/velo5x0-profile.sh"
 geodata_dir=${LY_ROUTE_GEODATA_DIR:-$repo_root/packaging/geodata}
 . "$repo_root/packaging/runtime-boundaries/gateway.sh"
 . "$repo_root/scripts/lib/product-build-profile.sh"
@@ -380,13 +390,19 @@ elif command -v mmdebstrap >/dev/null 2>&1; then
   if [ "$product" = gateway ]; then
     include="$include,kea-dhcp4-server,isc-dhcp-client,ipset"
   fi
+  components=main
+  if [ "$hardware" = velo5x0 ]; then
+    include="$include,python3-smbus,initramfs-tools,firmware-atheros"
+    components=main,non-free-firmware
+  fi
   [ -z "$extra_packages" ] || include="$include,$extra_packages"
-  mmdebstrap --architectures="$arch" --variant=minbase --components=main --include="$include" "$suite" "$rootfs" "$mirror"
+  mmdebstrap --architectures="$arch" --variant=minbase --components="$components" --include="$include" "$suite" "$rootfs" "$mirror"
 else
   product_build_fail "mmdebstrap is required for a complete rootfs. Install it or set LY_ROUTE_ROOTFS_ALLOW_TAR_ONLY=1 for scaffold validation."
 fi
 
 cp -a "$overlay/." "$rootfs/"
+[ "$hardware" != velo5x0 ] || install_velo5x0_overlay "$rootfs"
 find "$rootfs/etc/systemd/system" -type f \
   \( -name '*.service' -o -name '*.socket' -o -name '*.timer' -o -name '*.target' -o -name '*.conf' \) \
   -exec chmod 0644 {} +

@@ -1,0 +1,19 @@
+{
+  "mode": "curve",
+  "manual_pwm": 31,
+  "temp_source": "cpu",
+  "cpu_statistic": "max",
+  "cpu_sensor": "temp2_input",
+  "curve_profile": "linear",
+  "min_pwm": 16,
+  "stop_temperature": 42,
+  "start_temperature": 45,
+  "full_temperature": 60,
+  "poll_interval": 3,
+  "curve": [
+    {"temperature": 45, "pwm": 16},
+    {"temperature": 50, "pwm": 43},
+    {"temperature": 55, "pwm": 71},
+    {"temperature": 60, "pwm": 100}
+  ]
+}

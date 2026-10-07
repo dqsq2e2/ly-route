@@ -1,0 +1,4 @@
+adaa288363647cc3adde62ed12e17d04937b9032590dc8bd0f9296410b997fef  200-igb-velocloud-edge5x0.patch
+fe70469488d06e723f1d128244c3e36789eccb950615a9e8dcc88b9b060a6e0b  210-mdio-gpio-clear-level-before-input.patch
+a64e56f9f1dd2f4318d03850e1872ffc5f46ec42148b8ab205822c4c7cecfd56  220-xhci-ti-tusb73x0-force-hcrst.patch
+e8f51c22e7c6c01719230a0092eeec79d7aebaf9fcb47dece6d1b7a53fa1383c  230-dsa-pdata-own-tree.patch

@@ -12,6 +12,7 @@ if [ -s "$installed_network" ] && command -v python3 >/dev/null 2>&1; then
   installed_values=$(python3 - "$installed_network" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 def interface_identity(path):
@@ -28,6 +29,13 @@ def interface_identity(path):
 def resolve(identity, inventory):
     expected_mac = str(identity.get("mac", "")).strip().lower()
     expected_pci = str(identity.get("pci", "")).strip().lower()
+    expected_name = str(identity.get("name", "")).strip()
+    # Board-defined DSA jack names are stable; their inherited MACs are not unique.
+    hardware = pathlib.Path("/etc/ly-route/hardware")
+    if hardware.exists() and hardware.read_text().strip() == "velo5x0" and \
+            re.fullmatch(r"lan[1-8]", expected_name):
+        current = inventory.get(expected_name)
+        return expected_name if current and current[0] == expected_mac else ""
     for name, (mac, pci) in inventory.items():
         if expected_mac and mac == expected_mac:
             return name
@@ -125,10 +133,16 @@ lan_if=${installed_management_interface:-}
 if [ -n "${lan_if:-}" ] && [ "$LY_ROUTE_MANAGEMENT_FALLBACK" = "yes" ]; then
   mkdir -p /etc/systemd/network
   management_network=/etc/systemd/network/05-ly-route-management.network
+  management_name_match=
+  if [ -r /etc/ly-route/hardware ] &&
+     [ "$(cat /etc/ly-route/hardware)" = velo5x0 ]; then
+    case "$lan_if" in lan[1-8]) management_name_match="Name=$lan_if" ;; esac
+  fi
   if [ -n "${installed_management_mac:-}" ]; then
     cat > "$management_network" <<EOF
 [Match]
 MACAddress=$installed_management_mac
+$management_name_match
 
 [Network]
 Address=$LY_ROUTE_MANAGEMENT_FALLBACK_CIDR

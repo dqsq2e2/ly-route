@@ -1,0 +1,2 @@
+# The firmware arms iTCO before Linux starts; retain it in the live initramfs.
+iTCO_wdt

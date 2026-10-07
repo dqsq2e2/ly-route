@@ -1,0 +1,138 @@
+name: VeloCloud Edge 5x0 installer
+
+on:
+  push:
+    branches: [5x0]
+    paths:
+      - '.github/workflows/velo5x0-build.yml'
+      - 'scripts/**'
+      - 'backend/**'
+      - 'frontend/gateway/**'
+      - 'runtime/**'
+      - 'packaging/rootfs-overlay/**'
+      - 'packaging/runtime-boundaries/**'
+      - 'packaging/hardware/velo5x0/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: velo5x0-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  CGO_ENABLED: '1'
+  GOPROXY: https://proxy.golang.org,direct
+  GOSUMDB: off
+  LY_ROUTE_MIRROR: https://deb.debian.org/debian
+  LY_ROUTE_SECURITY_MIRROR: https://security.debian.org/debian-security
+  LY_ROUTE_SMARTDNS_REF: Release48.3
+  LY_ROUTE_XRAY_REF: v26.3.27
+  LY_ROUTE_VPP_COMMIT: 744d3c7159ae130fb57f669a826ff1e45ed51836
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    container: debian:bookworm
+    timeout-minutes: 60
+    steps:
+      - name: Install kernel build tools
+        run: |
+          apt-get update
+          apt-get install -y build-essential flex bison libelf-dev libssl-dev bc cpio kmod xz-utils curl git ca-certificates pkg-config
+      - uses: actions/checkout@v7
+      - name: Build the patched 5x0 kernel
+        run: bash scripts/build-velo5x0-kernel.sh --out "$PWD/kernel-debs" --jobs "$(nproc)"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: velo5x0-kernel
+          path: kernel-debs/
+          if-no-files-found: error
+          retention-days: 14
+
+  installer:
+    runs-on: ubuntu-24.04
+    needs: kernel
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.0'
+          cache-dependency-path: backend/go.sum
+      - uses: actions/download-artifact@v8
+        with:
+          name: velo5x0-kernel
+          path: kernel-debs
+      - name: Install build tools and verify source
+        run: |
+          chmod +x scripts/*.sh packaging/rootfs-overlay/usr/lib/ly-route/*.sh
+          bash scripts/normalize-source-line-endings.sh "$GITHUB_WORKSPACE"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get update
+          sudo apt-get install -y mmdebstrap debian-archive-keyring zstd ca-certificates build-essential cmake dpkg-dev git curl gdisk parted dosfstools rsync grub-pc-bin grub-efi-amd64-bin shim-signed e2fsprogs util-linux xorriso isolinux syslinux-common mtools qemu-system-x86
+          curl -fsSL https://deb.debian.org/debian/pool/main/l/live-build/live-build_20230502_all.deb -o /tmp/live-build.deb
+          sudo dpkg -i /tmp/live-build.deb
+          bash scripts/dev-hotfix-check.sh ./cmd/... ./internal/httpapi
+          (cd backend && go test ./internal/httpapi -run '^TestFan')
+          python3 scripts/test-velo5x0-hardware.py
+          bash packaging/hardware/velo5x0/glue/tests/check.sh
+      - uses: actions/cache@v5
+        id: vpp-cache
+        with:
+          path: |
+            vpp-base-debs
+            vpp-dev-debs
+          key: vpp-bookworm-amd64-${{ env.LY_ROUTE_VPP_COMMIT }}-${{ hashFiles('scripts/build-vpp-bookworm-debs.sh', 'packaging/vpp-patches/**') }}
+      - name: Build pinned VPP packages
+        if: steps.vpp-cache.outputs.cache-hit != 'true'
+        run: |
+          git init vpp-master
+          git -C vpp-master remote add origin https://github.com/FDio/vpp.git
+          git -C vpp-master fetch --depth 512 origin "$LY_ROUTE_VPP_COMMIT" '+refs/tags/v25.10:refs/tags/v25.10'
+          git -C vpp-master checkout --detach "$LY_ROUTE_VPP_COMMIT"
+          mkdir -p vpp-base-debs vpp-dev-debs
+          sudo --preserve-env=LY_ROUTE_VPP_COMMIT,LY_ROUTE_MIRROR env LY_ROUTE_RUNTIME_DEB_ARCH=amd64 LY_ROUTE_VPP_SRC="$PWD/vpp-master" LY_ROUTE_RUNTIME_DEBS_DIR="$PWD/vpp-base-debs" LY_ROUTE_VPP_DEV_DEBS_DIR="$PWD/vpp-dev-debs" LY_ROUTE_VPP_MAKE_ARGS=DPDK_MLX_IBV_LINK=dlopen ./scripts/build-vpp-bookworm-debs.sh
+          sudo chown -R "$USER:$USER" vpp-base-debs vpp-dev-debs vpp-master
+      - uses: actions/cache/save@v5
+        if: steps.vpp-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            vpp-base-debs
+            vpp-dev-debs
+          key: vpp-bookworm-amd64-${{ env.LY_ROUTE_VPP_COMMIT }}-${{ hashFiles('scripts/build-vpp-bookworm-debs.sh', 'packaging/vpp-patches/**') }}
+      - name: Build runtime and firmware
+        run: |
+          mkdir -p runtime-debs
+          cp vpp-base-debs/*.deb runtime-debs/
+          export LY_ROUTE_RUNTIME_DEB_ARCH=amd64 LY_ROUTE_VPP_DEV_DEBS_DIR="$PWD/vpp-dev-debs"
+          export LY_ROUTE_VPP_PACKAGE_VERSION="$(dpkg-deb -f "$(find runtime-debs -name 'vpp_*.deb' -print -quit)" Version)"
+          sudo --preserve-env=LY_ROUTE_SMARTDNS_REF,LY_ROUTE_MIRROR,LY_ROUTE_RUNTIME_DEB_ARCH,LY_ROUTE_VPP_DEV_DEBS_DIR,LY_ROUTE_VPP_PACKAGE_VERSION ./scripts/build-runtime-debs.sh smartdns
+          sudo chown -R "$USER:$USER" runtime-debs tmp
+          ./scripts/build-runtime-debs.sh dns-vpp-proxy
+          ./scripts/build-runtime-debs.sh xray
+          for target in vpp-apply vpp-pppoe-client vpp-smart-qos vpp-security-guard vpp-dns-intercept vpp-pre-nat-route; do
+            sudo --preserve-env=LY_ROUTE_RUNTIME_DEB_ARCH,LY_ROUTE_VPP_DEV_DEBS_DIR,LY_ROUTE_VPP_PACKAGE_VERSION ./scripts/build-runtime-debs.sh "$target"
+          done
+          sudo --preserve-env=LY_ROUTE_MIRROR env LY_ROUTE_EXTRA_DEBS_DIR="$PWD/runtime-debs" ./scripts/build-rootfs.sh --product gateway --arch amd64 --hardware velo5x0 --out dist/rootfs
+          sudo --preserve-env=LY_ROUTE_MIRROR,LY_ROUTE_SECURITY_MIRROR env LY_ROUTE_KERNEL_DEBS_DIR="$PWD/kernel-debs" ./scripts/build-disk-image.sh --product gateway --hardware velo5x0 --rootfs dist/rootfs/ly-route-rootfs-gateway-bookworm-amd64.tar.zst --out dist/disk --size 4G
+          sudo --preserve-env=LY_ROUTE_MIRROR,LY_ROUTE_SECURITY_MIRROR env LY_ROUTE_KERNEL_DEBS_DIR="$PWD/kernel-debs" ./scripts/build-auto-install-iso.sh --product gateway --hardware velo5x0 --image dist/disk/ly-route-gateway-bookworm-amd64-4g.img.zst --out dist/iso
+          cd dist/iso
+          sha256sum -c ly-route-gateway-velo5x0-x86_64-installer.iso.sha256
+          xorriso -indev ly-route-gateway-velo5x0-x86_64-installer.iso -report_system_area plain -report_el_torito plain
+      - name: Verify headless USB HDD boot on the second serial port
+        run: python3 scripts/test-velo5x0-usb-boot.py --iso dist/iso/ly-route-gateway-velo5x0-x86_64-installer.iso
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: velo5x0-boot-verification
+          path: dist/verification/
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ly-route-gateway-velo5x0-installer
+          path: dist/iso/
+          if-no-files-found: error
+          retention-days: 30

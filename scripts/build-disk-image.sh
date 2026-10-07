@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build-disk-image.sh --product gateway|orchestrator --rootfs FILE [--out dist/disk-image] [--size 4G] [--suite bookworm]
+Usage: scripts/build-disk-image.sh --product gateway|orchestrator --rootfs FILE [--out dist/disk-image] [--size 4G] [--suite bookworm] [--hardware velo5x0]
 
 Builds a product-specific amd64 GPT disk image with BIOS and UEFI boot support.
 The rootfs checksum and embedded Task 22 artifact manifest must match --product.
@@ -18,6 +18,7 @@ EOF
 }
 
 product=""
+hardware=""
 rootfs=""
 out_dir="dist/disk-image"
 size="4G"
@@ -26,7 +27,7 @@ fixture=${LY_ROUTE_DISK_IMAGE_FIXTURE:-0}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --product|--rootfs|--out|--size|--suite)
+    --product|--rootfs|--out|--size|--suite|--hardware)
       option=$1
       [ "$#" -ge 2 ] && [ -n "$2" ] || { echo "$option requires a value" >&2; exit 2; }
       case "$option" in
@@ -35,6 +36,7 @@ while [ "$#" -gt 0 ]; do
         --out) out_dir=$2 ;;
         --size) size=$2 ;;
         --suite) suite=$2 ;;
+        --hardware) hardware=$2 ;;
       esac
       shift 2
       ;;
@@ -47,6 +49,11 @@ done
 case "$product" in
   gateway|orchestrator) ;;
   *) echo "Unsupported product: $product (expected gateway or orchestrator)" >&2; exit 2 ;;
+esac
+case "$hardware" in
+  "") ;;
+  velo5x0) [ "$product" = gateway ] || { echo "velo5x0 requires gateway" >&2; exit 2; } ;;
+  *) echo "Unsupported hardware: $hardware" >&2; exit 2 ;;
 esac
 case "$suite" in
   bookworm) ;;
@@ -65,6 +72,7 @@ case "$size_suffix" in G|g|M|m) ;; *) echo "Unsupported image size: $size" >&2; 
 size_label=$(printf '%s%s' "$size_number" "$size_suffix" | tr '[:upper:]' '[:lower:]')
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$repo_root/scripts/lib/velo5x0-profile.sh"
 . "$repo_root/packaging/runtime-boundaries/gateway.sh"
 . "$repo_root/scripts/lib/product-build-profile.sh"
 load_product_build_profile "$repo_root" "$product" ""
@@ -286,8 +294,17 @@ EOF
   mount -t proc proc "$root_tree/proc"
   mount -t sysfs sysfs "$root_tree/sys"
   env -u TMPDIR chroot "$root_tree" apt-get -o Acquire::ForceIPv4=true update
+  kernel_package=linux-image-amd64
+  if [ "$hardware" = velo5x0 ]; then
+    [ "$(cat "$root_tree/etc/ly-route/hardware")" = velo5x0 ] ||
+      product_build_fail "rootfs was not built for velo5x0"
+    kernel_deb=$(velo5x0_kernel_deb)
+    cp "$kernel_deb" "$root_tree/tmp/$(basename "$kernel_deb")"
+    kernel_package="/tmp/$(basename "$kernel_deb")"
+  fi
   env -u TMPDIR chroot "$root_tree" env DEBIAN_FRONTEND=noninteractive \
-    apt-get -o Acquire::ForceIPv4=true install -y linux-image-amd64 grub-pc-bin grub-efi-amd64-bin shim-signed dosfstools
+    apt-get -o Acquire::ForceIPv4=true install -y "$kernel_package" grub-pc-bin grub-efi-amd64-bin shim-signed dosfstools
+  [ "$hardware" != velo5x0 ] || rm -f "$root_tree$kernel_package"
   test -f "$root_tree/usr/bin/vpp"
   test -f "$root_tree/usr/bin/vppctl"
   test -f "$root_tree/usr/lib/systemd/system/vpp.service"
@@ -336,6 +353,13 @@ GRUB_DISTRIBUTOR="Ly Route $product"
 GRUB_CMDLINE_LINUX_DEFAULT="quiet"
 GRUB_CMDLINE_LINUX="root=UUID=$root_uuid intel_iommu=on amd_iommu=on iommu=pt"
 EOF
+  if [ "$hardware" = velo5x0 ]; then
+    cat >> "$mnt/etc/default/grub" <<'EOF'
+GRUB_TERMINAL="console serial"
+GRUB_SERIAL_COMMAND="serial --unit=1 --speed=115200 --word=8 --parity=no --stop=1"
+GRUB_CMDLINE_LINUX_DEFAULT="console=tty0 console=ttyS1,115200n8 acpi_enforce_resources=lax libata.force=noncq"
+EOF
+  fi
   mount --bind /dev "$mnt/dev"
   mount --bind /dev/pts "$mnt/dev/pts"
   mount -t proc proc "$mnt/proc"
@@ -381,4 +405,14 @@ if (manifest.product === "gateway") {
 writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 write_artifact_checksum "$image_manifest"
+if [ "$hardware" = velo5x0 ]; then
+  node - "$image_manifest" <<'NODE'
+const fs = require("node:fs");
+const file = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+manifest.hardware = "velo5x0";
+fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n");
+NODE
+  write_artifact_checksum "$image_manifest"
+fi
 printf 'Built %s\nBuilt %s\nBuilt %s\n' "$image" "$compressed" "$image_manifest"

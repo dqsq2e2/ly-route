@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build-auto-install-iso.sh --product gateway --image FILE.img.zst [--out dist/iso] [--suite bookworm]
+Usage: scripts/build-auto-install-iso.sh --product gateway --image FILE.img.zst [--out dist/iso] [--suite bookworm] [--hardware velo5x0]
 
 Builds a BIOS/UEFI hybrid Debian Live ISO that verifies and installs the embedded
 Ly Route disk image. The installer enumerates disks and NICs, asks for the target
@@ -18,6 +18,7 @@ EOF
 }
 
 product=
+hardware=
 image=
 out_dir=dist/iso
 suite=bookworm
@@ -28,6 +29,7 @@ while [ "$#" -gt 0 ]; do
     --image) image=${2:-}; shift 2 ;;
     --out) out_dir=${2:-}; shift 2 ;;
     --suite) suite=${2:-}; shift 2 ;;
+    --hardware) hardware=${2:-}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -35,6 +37,7 @@ done
 
 [ "$product" = gateway ] || { echo "--product must be gateway" >&2; exit 2; }
 [ "$suite" = bookworm ] || { echo "--suite must be bookworm" >&2; exit 2; }
+case "$hardware" in ""|velo5x0) ;; *) echo "Unsupported hardware: $hardware" >&2; exit 2 ;; esac
 [ -f "$image" ] || { echo "--image must point to an existing .img.zst" >&2; exit 2; }
 case "$image" in *.img.zst) ;; *) echo "--image must end in .img.zst" >&2; exit 2 ;; esac
 [ -f "$image.sha256" ] || { echo "image checksum is missing: $image.sha256" >&2; exit 1; }
@@ -42,6 +45,12 @@ image_raw=${image%.zst}
 manifest="$image.manifest.json"
 [ -f "$manifest" ] || { echo "image manifest is required: $manifest" >&2; exit 1; }
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$repo_root/scripts/lib/velo5x0-profile.sh"
+if [ "$hardware" = velo5x0 ]; then
+  kernel_deb=$(velo5x0_kernel_deb)
+  [ "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).hardware || ""' "$manifest")" = velo5x0 ] ||
+    { echo "disk image was not built for velo5x0" >&2; exit 1; }
+fi
 . "$repo_root/packaging/runtime-boundaries/gateway.sh"
 node - "$manifest" <<'NODE'
 const { readFileSync } = require("node:fs");
@@ -125,6 +134,7 @@ PY
 fi
 compressed_hash=$(sha256sum "$image" | awk '{print $1}')
 iso_name=ly-route-gateway-x86_64-installer.iso
+[ "$hardware" != velo5x0 ] || iso_name=ly-route-gateway-velo5x0-x86_64-installer.iso
 iso_path="$artifact_dir/$iso_name"
 
 # Keep one unambiguous ISO baseline in the output directory. Older acceptance
@@ -153,12 +163,13 @@ set -euo pipefail
 payload_dir=/opt/ly-route/install
 payload=$payload_dir/ly-route-gateway-x86_64.img.zst
 log=/var/log/ly-route-installer.log
-exec > >(tee -a "$log") 2>&1
 
-# The ESXi remote console injects keys into the graphical virtual terminal,
-# not into its optional serial-log device. Bind the installer service to tty1
-# so both local hardware consoles and ESXi use the same visible input path.
 prompt_tty=/dev/tty1
+for token in $(cat /proc/cmdline); do
+  case "$token" in
+    lyroute.console=ttyS[0-9]) prompt_tty=/dev/${token#lyroute.console=} ;;
+  esac
+done
 say() {
   local message="[Ly Route] $*"
   printf '\n%s\n' "$message" >> "$log"
@@ -167,6 +178,7 @@ say() {
 fail() { say "Installation stopped: $*"; exit 1; }
 [ -r "$prompt_tty" ] && [ -w "$prompt_tty" ] || prompt_tty=/dev/console
 [ -r "$prompt_tty" ] && [ -w "$prompt_tty" ] || fail 'installer console is unavailable'
+exec > >(tee -a "$log" > "$prompt_tty") 2>&1
 cmdline=" $(cat /proc/cmdline) "
 case "$cmdline" in *' lyroute.autoinstall=1 '*) ;; *) fail 'installer mode is not enabled' ;; esac
 
@@ -191,6 +203,18 @@ list_nics() {
     [ -e "$path" ] || continue
     name=$(basename "$path")
     [ "$name" = lo ] && continue
+    [ "$(cat "$path/type")" = 1 ] || continue
+    [ ! -d "$path/wireless" ] || continue
+    [ -e "$path/device" ] || continue
+    if [ -r /etc/ly-route/hardware ] &&
+       [ "$(cat /etc/ly-route/hardware)" = velo5x0 ]; then
+      # DSA conduits are not physical jacks and cannot be installer choices.
+      case "$name" in lan[1-8]) ;; *)
+        [ ! -e "$path/dsa" ] || continue
+        [ ! -e "$path/upper_lan1" ] && [ ! -e "$path/upper_lan5" ] || continue
+        ;;
+      esac
+    fi
     mac=$(cat "$path/address" 2>/dev/null || true)
     state=$(cat "$path/operstate" 2>/dev/null || printf unknown)
     device=$(readlink -f "$path/device" 2>/dev/null || true)
@@ -198,6 +222,13 @@ list_nics() {
     case "$pci" in ????\:??\:??.?) ;; *) pci=unknown ;; esac
     driver=none
     [ -e "$device/driver" ] && driver=$(basename "$(readlink -f "$device/driver")")
+    if [ "$pci" = unknown ]; then
+      for conduit in "$path"/lower_*; do
+        [ -e "$conduit/device" ] || continue
+        pci=$(basename "$(readlink -f "$conduit/device")")
+        case "$pci" in ????\:??\:??.?) break ;; *) pci=unknown ;; esac
+      done
+    fi
     printf '%s|%s|%s|%s|%s\n' "$name" "$mac" "$pci" "$state" "$driver"
   done
 }
@@ -230,6 +261,26 @@ candidate_driver() {
 probe_interface() {
   local row=$1 name=$2 driver=$3 native= dpdk= dpdk_mode= iommu= reason= candidates= selected= state=locked
   iommu=$(readlink -f "/sys/class/net/$name/device/iommu_group" 2>/dev/null || true)
+  # The patched I354 driver owns board-specific MDIO and switch links.
+  # Never offer those functions (or their DSA ports) to an unpatched DPDK PMD.
+  if [ -r /etc/ly-route/hardware ] &&
+     [ "$(cat /etc/ly-route/hardware)" = velo5x0 ]; then
+    case "$(printf '%s' "$row" | cut -d'|' -f3)" in
+      0000:00:14.*)
+        if [ "$driver" = igb ]; then
+          native='{"hook":"af_xdp","mode":"zero_copy","tier":"vpp_native","verified":"hardware_preflight"}'
+          printf '%s|ready|5x0-Linux-owned-preflight|%s|%s' "$row" "$native" "$native"
+        else
+          printf '%s|locked|DSA-port-requires-runtime-qualification||' "$row"
+        fi
+        return
+        ;;
+    esac
+    case "$name" in lan[1-8])
+      printf '%s|locked|DSA-port-requires-runtime-qualification||' "$row"
+      return ;;
+    esac
+  fi
   # The live environment does not run the installed VPP instance. This is a
   # hardware preflight only; first boot runtime-check.sh performs the actual
   # VPP attachment proof before any data interface is enabled.
@@ -267,8 +318,8 @@ done
 live_source=$(findmnt -n -o SOURCE /run/live/medium 2>/dev/null || true)
 live_parent=
 if [ -n "$live_source" ]; then
-  live_parent=$(lsblk -ndo PKNAME "$live_source" 2>/dev/null | head -1 || true)
-  [ -z "$live_parent" ] || live_parent=/dev/$live_parent
+  live_parent=$(lsblk -s -nrpo NAME,TYPE "$live_source" 2>/dev/null |
+    awk '$2 == "disk" {print $1; exit}' || true)
 fi
 
 eligible() {
@@ -371,17 +422,23 @@ say '磁盘校验通过，正在写入管理口和网卡映射。'
 udevadm settle 2>/dev/null || true
 partprobe "$target" 2>/dev/null || true
 root_partition=$(lsblk -nrpo NAME,LABEL "$target" | awk '$2 == "LYROUTE_ROOT" {print $1; exit}')
-[ -b "$root_partition" ] || root_partition=$(blkid -o device -t LABEL=LYROUTE_ROOT 2>/dev/null | head -1 || true)
 # A newly written image can expose the partition table before udev has
 # populated filesystem labels. The root filesystem is the only ext4 partition
 # in the appliance image, so use that as a safe, layout-independent fallback.
 [ -b "$root_partition" ] || root_partition=$(lsblk -nrpo NAME,FSTYPE,TYPE "$target" | awk '$2 == "ext4" && $3 == "part" {print $1; exit}')
 [ -b "$root_partition" ] || fail 'installed root partition was not found'
+sgdisk -e "$target"
 mount "$root_partition" /mnt
 mkdir -p /mnt/etc/systemd/network
+management_name_match=
+if [ -r /etc/ly-route/hardware ] &&
+   [ "$(cat /etc/ly-route/hardware)" = velo5x0 ]; then
+  case "$management_name" in lan[1-8]) management_name_match="Name=$management_name" ;; esac
+fi
 cat > /mnt/etc/systemd/network/05-ly-route-management.network <<EOF
 [Match]
 MACAddress=$management_mac
+$management_name_match
 
 [Network]
 Address=$management_ip
@@ -478,6 +535,17 @@ TTYReset=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+if [ "$hardware" = velo5x0 ]; then
+  install_velo5x0_overlay "$work/config/includes.chroot"
+  mkdir -p "$work/config/packages.chroot"
+  cp "$kernel_deb" "$work/config/packages.chroot/"
+  # ttyS1 is the actual 5x0 console, including installer prompts and input.
+  sed -i \
+    -e 's/dev-tty1.device/dev-ttyS1.device/g' \
+    -e 's/getty@tty1.service/serial-getty@ttyS1.service/g' \
+    -e 's|TTYPath=/dev/tty1|TTYPath=/dev/ttyS1|g' \
+    "$work/config/includes.chroot/etc/systemd/system/ly-route-auto-install.service"
+fi
 ln -s ../ly-route-auto-install.service \
   "$work/config/includes.chroot/etc/systemd/system/multi-user.target.wants/ly-route-auto-install.service"
 
@@ -504,6 +572,11 @@ pciutils
 ethtool
 kmod
 EOF
+[ "$hardware" != velo5x0 ] || {
+  sed -i '/^linux-image-amd64$/d' "$work/config/package-lists/installer.list.chroot"
+  printf 'initramfs-tools\npython3-smbus\nfirmware-atheros\n' >> \
+    "$work/config/package-lists/installer.list.chroot"
+}
 
 # The Debian live-build version on CI resolves its ISOLINUX source from
 # /root/isolinux inside the build chroot. Populate that directory from the
@@ -539,6 +612,14 @@ if [ "${LY_ROUTE_ISO_FIXTURE:-0}" = 1 ]; then
   tar -C "$work" -cf "$iso_path" config
 else
   for command in lb xorriso sha256sum; do command -v "$command" >/dev/null || { echo "required command missing: $command" >&2; exit 1; }; done
+  live_options=()
+  if [ "$hardware" = velo5x0 ]; then
+    kernel_package=$(dpkg-deb -f "$kernel_deb" Package)
+    live_options+=(--linux-flavours "${kernel_package#linux-image-}" --archive-areas 'main non-free-firmware')
+    bootappend='boot=live components console=tty0 console=ttyS1,115200n8 acpi_enforce_resources=lax libata.force=noncq systemd.show_status=true lyroute.autoinstall=1 lyroute.console=ttyS1'
+  else
+    bootappend='boot=live components console=tty0 systemd.show_status=true lyroute.autoinstall=1'
+  fi
   (
     cd "$work"
     lb config --mode debian --distribution "$suite" --architectures amd64 \
@@ -546,8 +627,8 @@ else
       --security false --mirror-bootstrap "$mirror" --mirror-chroot "$mirror" \
       --mirror-binary "$mirror" --debootstrap-options '--include=gpgv' \
       --linux-packages linux-image \
-      --bootappend-live 'boot=live components console=tty0 systemd.show_status=true lyroute.autoinstall=1' \
-      --iso-volume 'LY_ROUTE_INSTALL' --memtest none
+      --bootappend-live "$bootappend" \
+      --iso-volume 'LY_ROUTE_INSTALL' --memtest none "${live_options[@]}"
     # Debian live-build defaults both BIOS and UEFI menus to an infinite wait.
     # Keep a short recovery window, then enter the hardware-aware installer.
     install -D -m 0644 /usr/share/live/build/bootloaders/isolinux/isolinux.cfg \
@@ -581,6 +662,17 @@ else
   mv "$built" "$iso_path"
 fi
 
+if [ "$hardware" = velo5x0 ]; then
+  # GRUB's hybrid MBR supports USB HDD boot without invoking a VGA VESA menu.
+  # The live filesystem remains exactly the one generated above.
+  command -v grub-mkrescue >/dev/null || { echo "grub-mkrescue is required" >&2; exit 1; }
+  iso_tree="$work/usb-iso"
+  xorriso -osirrox on -indev "$iso_path" -extract / "$iso_tree" >/dev/null 2>&1
+  rm -f "$iso_tree/boot/grub/efi.img"
+  cp "$repo_root/packaging/hardware/velo5x0/installer-grub.cfg" "$iso_tree/boot/grub/grub.cfg"
+  grub-mkrescue -o "$work/velo5x0.iso" "$iso_tree" -- -volid LY_ROUTE_INSTALL
+  mv "$work/velo5x0.iso" "$iso_path"
+else
 # live-build regenerates the boot menus during `lb build`, so apply the product
 # labels to the final ISO tree and replay the original El Torito boot metadata.
 boot_tree="$work/boot-menu"
@@ -620,6 +712,7 @@ xorriso -indev "$iso_path" -outdev "$rebranded_iso" \
   -map "$boot_splash" /isolinux/splash800x600.png \
   -boot_image any replay -commit >/dev/null 2>&1
 mv "$rebranded_iso" "$iso_path"
+fi
 
 sha256sum "$iso_path" > "$iso_path.sha256"
 cat > "$iso_path.manifest.json" <<EOF
@@ -629,6 +722,7 @@ cat > "$iso_path.manifest.json" <<EOF
   "product": "$product",
   "suite": "$suite",
   "arch": "amd64",
+  "hardware": "${hardware:-generic}",
   "image_size": $image_size,
   "image_sha256": "$image_hash",
   "embedded_image_sha256": "$compressed_hash",

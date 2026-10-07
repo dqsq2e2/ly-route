@@ -1,0 +1,13 @@
+[Unit]
+Description=VeloCloud Edge 5x0 temperature control
+After=ly-route-velo5x0-board.service
+Requires=ly-route-velo5x0-board.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/ly-route/velo5x0-board.py fan
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=VeloCloud Edge 5x0 board initialization
+DefaultDependencies=no
+After=systemd-udev-settle.service local-fs.target
+Wants=systemd-udev-settle.service
+Before=network-pre.target systemd-networkd.service ly-route-auto-install.service
+ConditionPathExists=/sys/class/dmi/id/board_name
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ly-route/velo5x0-board.py initialize
+RemainAfterExit=yes
+TimeoutStartSec=45
+
+[Install]
+WantedBy=multi-user.target

@@ -74,11 +74,13 @@ writeFileSync(path, source.replace(/\s*<!-- gateway-modules:start -->[\s\S]*?<!-
 NODE
 case "$product" in
   gateway)
+    cp "$source_dir/commercial.css" "$out_dir/"
     cat \
       "$source_dir/bootstrap.js" \
       "$source_dir/modules/routing.js" \
       "$source_dir/modules/modal.js" \
       "$source_dir/modules/overview.js" \
+      "$source_dir/gateway-fan.js" \
       "$source_dir/app.js" > "$out_dir/app.js"
     ;;
   orchestrator)
