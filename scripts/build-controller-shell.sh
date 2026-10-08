@@ -81,6 +81,7 @@ case "$product" in
       "$source_dir/modules/modal.js" \
       "$source_dir/modules/overview.js" \
       "$source_dir/gateway-fan.js" \
+      "$source_dir/gateway-wifi.js" \
       "$source_dir/app.js" > "$out_dir/app.js"
     ;;
   orchestrator)

@@ -1,0 +1,18 @@
+[Unit]
+Description=Ly Route wireless management radio
+After=ly-route-velo5x0-board.service systemd-networkd.service
+Requires=ly-route-velo5x0-board.service
+ConditionPathExists=/run/ly-route/wifi/config.json
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/ly-route/wifi-runtime.py run
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+KillMode=mixed
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,134 @@
+diff --git a/drivers/net/wireless/ath/ath10k/core.h b/drivers/net/wireless/ath/ath10k/core.h
+--- a/drivers/net/wireless/ath/ath10k/core.h
++++ b/drivers/net/wireless/ath/ath10k/core.h
+@@ -838,6 +838,9 @@
+ 	/* Firmware support IRAM recovery */
+ 	ATH10K_FW_FEATURE_IRAM_RECOVERY = 22,
+ 
++	/* CT 10.1 firmware advertises its temperature operation at bit 44. */
++	ATH10K_FW_FEATURE_HAS_GET_TEMP_CT = 44,
++
+ 	/* keep last */
+ 	ATH10K_FW_FEATURE_COUNT,
+ };
+diff --git a/drivers/net/wireless/ath/ath10k/core.c b/drivers/net/wireless/ath/ath10k/core.c
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -773,6 +773,7 @@
+ 	[ATH10K_FW_FEATURE_SINGLE_CHAN_INFO_PER_CHANNEL] = "single-chan-info-per-channel",
+ 	[ATH10K_FW_FEATURE_PEER_FIXED_RATE] = "peer-fixed-rate",
+ 	[ATH10K_FW_FEATURE_IRAM_RECOVERY] = "iram-recovery",
++	[ATH10K_FW_FEATURE_HAS_GET_TEMP_CT] = "get-temp-CT",
+ };
+ 
+ static unsigned int ath10k_core_get_fw_feature_str(char *buf,
+@@ -2096,6 +2097,10 @@
+ 
+ 				if (index == ie_len)
+ 					break;
++
++				/* Ignore CT capabilities that this bounded port does not implement. */
++				if (!ath10k_core_fw_feature_str[i])
++					continue;
+ 
+ 				if (data[index] & (1 << bit)) {
+ 					ath10k_dbg(ar, ATH10K_DBG_BOOT,
+@@ -2210,6 +2215,22 @@
+ 
+ 	/* calibration file is optional, don't check for any errors */
+ 	ath10k_fetch_cal_file(ar);
++
++	if (ar->hw_rev == ATH10K_HW_QCA988X &&
++	    (dmi_match(DMI_BOARD_NAME, "EDGE520") ||
++	     dmi_match(DMI_BOARD_NAME, "EDGE540"))) {
++		ret = ath10k_core_fetch_firmware_api_n(ar, "firmware-ct.bin",
++						     &ar->normal_mode_fw.fw_file);
++		if (!ret) {
++			if (!test_bit(ATH10K_FW_FEATURE_HAS_GET_TEMP_CT,
++				      ar->normal_mode_fw.fw_file.fw_features))
++				return -EINVAL;
++			ar->fw_api = 2;
++			goto success;
++		}
++		if (ret != -ENOENT)
++			return ret;
++	}
+ 
+ 	for (i = ATH10K_FW_API_MAX; i >= ATH10K_FW_API_MIN; i--) {
+ 		ar->fw_api = i;
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.h b/drivers/net/wireless/ath/ath10k/wmi.h
+--- a/drivers/net/wireless/ath/ath10k/wmi.h
++++ b/drivers/net/wireless/ath/ath10k/wmi.h
+@@ -1477,6 +1477,9 @@
+ 	WMI_10X_GPIO_CONFIG_CMDID,
+ 	WMI_10X_GPIO_OUTPUT_CMDID,
+ 
++	/* Explicit CT command number preserves upstream numbering. */
++	WMI_10X_PDEV_GET_TEMPERATURE_CMDID_CT = 0x906d,
++
+ 	WMI_10X_PDEV_UTF_CMDID = WMI_10X_END_CMDID - 1,
+ };
+ 
+@@ -1540,6 +1543,8 @@
+ 	WMI_10X_PDEV_TPC_CONFIG_EVENTID,
+ 
+ 	WMI_10X_GPIO_INPUT_EVENTID,
++	WMI_10X_PDEV_TEMPERATURE_EVENTID_CT = 0x9022,
++
+ 	WMI_10X_PDEV_UTF_EVENTID = WMI_10X_END_EVENTID - 1,
+ };
+ 
+diff --git a/drivers/net/wireless/ath/ath10k/wmi.c b/drivers/net/wireless/ath/ath10k/wmi.c
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -314,7 +314,7 @@
+ 	.force_fw_hang_cmdid = WMI_CMD_UNSUPPORTED,
+ 	.gpio_config_cmdid = WMI_10X_GPIO_CONFIG_CMDID,
+ 	.gpio_output_cmdid = WMI_10X_GPIO_OUTPUT_CMDID,
+-	.pdev_get_temperature_cmdid = WMI_CMD_UNSUPPORTED,
++	.pdev_get_temperature_cmdid = WMI_10X_PDEV_GET_TEMPERATURE_CMDID_CT,
+ 	.pdev_enable_adaptive_cca_cmdid = WMI_CMD_UNSUPPORTED,
+ 	.scan_update_request_cmdid = WMI_CMD_UNSUPPORTED,
+ 	.vdev_standby_response_cmdid = WMI_CMD_UNSUPPORTED,
+@@ -6122,6 +6122,11 @@
+ 	case WMI_10X_PDEV_UTF_EVENTID:
+ 		/* ignore utf events */
+ 		break;
++	case WMI_10X_PDEV_TEMPERATURE_EVENTID_CT:
++		if (test_bit(ATH10K_FW_FEATURE_HAS_GET_TEMP_CT,
++			     ar->running_fw->fw_file.fw_features))
++			ath10k_wmi_event_temperature(ar, skb);
++		break;
+ 	default:
+ 		ath10k_warn(ar, "Unknown eventid: %d\n", id);
+ 		break;
+@@ -7839,6 +7844,20 @@
+ 		   "wmi peer assoc vdev %d addr %pM (%s)\n",
+ 		   arg->vdev_id, arg->addr,
+ 		   arg->peer_reassoc ? "reassociate" : "new");
++	return skb;
++}
++
++static struct sk_buff *
++ath10k_wmi_10_1_op_gen_pdev_get_temperature(struct ath10k *ar)
++{
++	struct sk_buff *skb;
++
++	if (!test_bit(ATH10K_FW_FEATURE_HAS_GET_TEMP_CT,
++		      ar->running_fw->fw_file.fw_features))
++		return ERR_PTR(-EOPNOTSUPP);
++	skb = ath10k_wmi_alloc_skb(ar, 0);
++	if (!skb)
++		return ERR_PTR(-ENOMEM);
+ 	return skb;
+ }
+ 
+@@ -9226,7 +9245,7 @@
+ 	.gen_pdev_set_rd = ath10k_wmi_10x_op_gen_pdev_set_rd,
+ 	.gen_start_scan = ath10k_wmi_10x_op_gen_start_scan,
+ 	.gen_peer_assoc = ath10k_wmi_10_1_op_gen_peer_assoc,
+-	/* .gen_pdev_get_temperature not implemented */
++	.gen_pdev_get_temperature = ath10k_wmi_10_1_op_gen_pdev_get_temperature,
+ 
+ 	/* shared with main branch */
+ 	.pull_scan = ath10k_wmi_op_pull_scan_ev,

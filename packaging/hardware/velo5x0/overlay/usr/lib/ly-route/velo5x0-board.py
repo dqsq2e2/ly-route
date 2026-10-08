@@ -123,7 +123,8 @@ def sensors(bus):
         for sensor in path.glob("temp*_input"):
             try:
                 value = int(sensor.read_text()) / 1000
-                if -20 <= value <= 125:
+                minimum = 0 if name == "ath10k_hwmon" else -20
+                if minimum <= value <= 125:
                     label = sensor.with_name(sensor.name.replace("_input", "_label"))
                     values.append({
                         "source": "cpu" if name == "coretemp" else "wifi",
@@ -148,6 +149,27 @@ def sensors(bus):
                 "value": value,
             })
     return values
+
+
+def wifi_sensor_state(readings):
+    if any(item["source"] == "wifi" for item in readings):
+        return "ready"
+    interfaces = [path.parent for path in Path("/sys/class/net").glob("*/wireless")]
+    if not interfaces:
+        return "no_radio"
+    try:
+        if not any(int((path / "flags").read_text().strip(), 16) & 1 for path in interfaces):
+            return "radio_off"
+    except (OSError, ValueError):
+        return "unavailable"
+    for path in Path("/sys/class/hwmon").glob("hwmon*"):
+        try:
+            if (path / "name").read_text().strip() == "ath10k_hwmon":
+                value = int((path / "temp1_input").read_text()) / 1000
+                return "invalid_reading" if not 0 <= value <= 125 else "unavailable"
+        except (OSError, ValueError):
+            return "unavailable"
+    return "unsupported"
 
 
 def temperature(bus):
@@ -275,6 +297,7 @@ def write_status(config, revision, powered, pwm, readings, effective, error):
         "output_pwm": pwm,
         "temperatures": temperatures,
         "sensors": readings,
+        "sensor_states": {"wifi": wifi_sensor_state(readings)},
         "effective_temperature": effective,
         "error": error,
         "mode": config["mode"],

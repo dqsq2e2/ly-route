@@ -189,3 +189,9 @@ textarea { min-height: 84px; resize: vertical; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+@media (max-width: 900px) {
+  .app-shell.wifi-workspace-active { grid-template-columns: minmax(0, 1fr); }
+  .app-shell.wifi-workspace-active .paui-body { grid-column: 1; grid-row: 2; min-height: 0; }
+  .app-shell.wifi-workspace-active:not(.mobile-menu-open) .paui-sidebar { display: none; }
+}

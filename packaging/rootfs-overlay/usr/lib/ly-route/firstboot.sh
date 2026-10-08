@@ -339,7 +339,7 @@ for item in document.get("data_interfaces", []):
         ]
     elif hook == "af_xdp" and mode == "zero_copy":
         commands = [
-            "?create interface af_xdp host-if " + name + " name " + vpp_name + " zero-copy",
+            "?create interface af_xdp host-if " + name + " name " + vpp_name + " num-rx-queues all zero-copy",
             "set interface state " + vpp_name + " up",
             "show hardware-interfaces " + vpp_name,
             "show interface " + vpp_name,

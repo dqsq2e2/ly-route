@@ -37,6 +37,18 @@ class Bus:
 
 
 class HardwareTests(unittest.TestCase):
+    def test_wifi_negative_firmware_reading_is_not_used_for_fan_control(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hwmon = Path(directory)
+            (hwmon / "name").write_text("ath10k_hwmon")
+            (hwmon / "temp1_input").write_text("-15000")
+            bus = Bus({(0x2F, 0): 128, (0x2F, 2): 128, (0x2F, 4): 128})
+            with patch.object(board.glob, "glob", return_value=[directory]):
+                self.assertEqual(board.sensors(bus), [])
+            (hwmon / "temp1_input").write_text("47000")
+            with patch.object(board.glob, "glob", return_value=[directory]):
+                self.assertEqual(board.sensors(bus)[0]["value"], 47)
+
     def test_initialize_closes_debian_smbus_without_context_manager(self):
         bus = Bus({(0x2F, 0xFD): 0xFF})
         with patch.object(board, "load"), patch.object(board, "SMBus", return_value=bus):

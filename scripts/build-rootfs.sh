@@ -392,7 +392,7 @@ elif command -v mmdebstrap >/dev/null 2>&1; then
   fi
   components=main
   if [ "$hardware" = velo5x0 ]; then
-    include="$include,python3-smbus,initramfs-tools,firmware-atheros"
+  include="$include,python3-smbus,initramfs-tools,firmware-atheros,iw,rfkill,hostapd,wpasupplicant,wireless-regdb,ethtool"
     components=main,non-free-firmware
   fi
   [ -z "$extra_packages" ] || include="$include,$extra_packages"

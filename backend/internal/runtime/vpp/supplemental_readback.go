@@ -39,6 +39,11 @@ func verifySupplementalOperation(operation Operation, results []VPPCTLCommandRes
 		if !strings.Contains(hardware, payload.VPPInterface) {
 			return snapshotDecodeError("native attachment hardware readback does not identify %q", payload.VPPInterface)
 		}
+		for _, line := range strings.Split(hardware, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "error ") {
+				return snapshotDecodeError("native attachment %q reports a device error: %s", payload.VPPInterface, strings.TrimSpace(line))
+			}
+		}
 		if payload.Hook == NativeHookAFXDP && !strings.Contains(hardware, "netdev "+payload.LinuxInterface) {
 			return snapshotDecodeError("AF_XDP attachment %q does not identify Linux netdev %q", payload.VPPInterface, payload.LinuxInterface)
 		}

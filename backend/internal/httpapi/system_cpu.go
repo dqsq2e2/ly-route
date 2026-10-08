@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -13,17 +14,54 @@ type procCPUCounters struct {
 	idle  uint64
 }
 
+type procCPUSampler struct {
+	mu       sync.Mutex
+	read     func() (procCPUCounters, error)
+	now      func() time.Time
+	wait     func(time.Duration)
+	before   procCPUCounters
+	lastAt   time.Time
+	last     float64
+	hasValue bool
+}
+
+var hostCPUSampler = procCPUSampler{read: readProcCPUCounters, now: time.Now, wait: time.Sleep}
+
 func parseProcStat() (float64, error) {
-	before, err := readProcCPUCounters()
+	return hostCPUSampler.sample()
+}
+
+func (sampler *procCPUSampler) sample() (float64, error) {
+	sampler.mu.Lock()
+	defer sampler.mu.Unlock()
+	now := sampler.now()
+	age := now.Sub(sampler.lastAt)
+	if sampler.hasValue && age >= 0 && age < time.Second {
+		return sampler.last, nil
+	}
+	after, err := sampler.read()
 	if err != nil {
 		return 0, err
 	}
-	time.Sleep(200 * time.Millisecond)
-	after, err := readProcCPUCounters()
-	if err != nil {
-		return 0, err
+	before := sampler.before
+	if !sampler.hasValue || age <= 0 || age > 30*time.Second {
+		before = after
+		sampler.wait(200 * time.Millisecond)
+		after, err = sampler.read()
+		if err != nil {
+			return 0, err
+		}
+		now = sampler.now()
 	}
-	return procCPUIntervalPercent(before, after)
+	// Normal refreshes cover the entire interval, not a request-correlated
+	// 200 ms burst from concurrent management-plane collectors.
+	value, err := procCPUIntervalPercent(before, after)
+	sampler.before, sampler.lastAt = after, now
+	sampler.hasValue = err == nil
+	if err == nil {
+		sampler.last = value
+	}
+	return value, err
 }
 
 func readProcCPUCounters() (procCPUCounters, error) {

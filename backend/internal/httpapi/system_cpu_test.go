@@ -1,6 +1,34 @@
 package httpapi
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestSystemCPUSamplerUsesWholeRefreshIntervalAndCachesConcurrentReads(t *testing.T) {
+	now := time.Unix(1000, 0)
+	reads := 0
+	inputs := []procCPUCounters{{1000, 500}, {1080, 504}, {3080, 1504}}
+	sampler := procCPUSampler{
+		now:  func() time.Time { return now },
+		wait: func(duration time.Duration) { now = now.Add(duration) },
+		read: func() (procCPUCounters, error) {
+			value := inputs[reads]
+			reads++
+			return value, nil
+		},
+	}
+	if value, err := sampler.sample(); err != nil || value != 95 {
+		t.Fatalf("initial spike = %v, %v", value, err)
+	}
+	if value, err := sampler.sample(); err != nil || value != 95 || reads != 2 {
+		t.Fatalf("concurrent request must reuse sample: %v, %v, reads=%d", value, err, reads)
+	}
+	now = now.Add(5 * time.Second)
+	if value, err := sampler.sample(); err != nil || value != 50 || reads != 3 {
+		t.Fatalf("refresh interval must replace spike with measured 50%%: %v, %v", value, err)
+	}
+}
 
 func TestSystemCPUIntervalPercent(t *testing.T) {
 	for _, test := range []struct {

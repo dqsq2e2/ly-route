@@ -726,7 +726,7 @@ func DataplaneAttachOperation(requestID string, attachment NativeAttachment) Ope
 		}
 	case attachment.Hook == NativeHookAFXDP && attachment.Mode == NativeModeZeroCopy:
 		commands = []string{
-			fmt.Sprintf("?create interface af_xdp host-if %s name %s zero-copy", attachment.LinuxInterface, attachment.VPPInterface),
+			fmt.Sprintf("?create interface af_xdp host-if %s name %s num-rx-queues all zero-copy", attachment.LinuxInterface, attachment.VPPInterface),
 			fmt.Sprintf("set interface state %s up", attachment.VPPInterface),
 			fmt.Sprintf("show hardware-interfaces %s", attachment.VPPInterface),
 			fmt.Sprintf("show interface %s", attachment.VPPInterface),

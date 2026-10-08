@@ -59,7 +59,7 @@ func TestNativePath_proven_assignment_builds_attach_with_semantic_readback(t *te
 	if len(operations) == 0 || operations[0].Name != "vpp.dataplane.attach" {
 		t.Fatalf("operations = %#v, want native attach first", operations)
 	}
-	if got := operations[0].VPPCtlCommands; len(got) != 4 || got[0] != "?create interface af_xdp host-if eth1 name lyroute-eth1 zero-copy" || got[1] != "set interface state lyroute-eth1 up" || got[2] != "show hardware-interfaces lyroute-eth1" || got[3] != "show interface lyroute-eth1" {
+	if got := operations[0].VPPCtlCommands; len(got) != 4 || got[0] != "?create interface af_xdp host-if eth1 name lyroute-eth1 num-rx-queues all zero-copy" || got[1] != "set interface state lyroute-eth1 up" || got[2] != "show hardware-interfaces lyroute-eth1" || got[3] != "show interface lyroute-eth1" {
 		t.Fatalf("attach commands = %#v", got)
 	}
 }

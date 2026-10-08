@@ -58,7 +58,9 @@ probe_native_candidate() {
   probe_interface=$1
   probe_hook=$2
   probe_mode=$3
-  probe_vpp_interface="lyroute-proof-$$-$(date -u +%s)-$probe_hook"
+  # VPP truncates the name column in `show interface` to 32 characters.
+  # Keep the unique probe identity inside that width for semantic readback.
+  probe_vpp_interface="lyroute-proof-$$-$probe_hook"
   probe_delete="delete interface $probe_hook $probe_vpp_interface"
   probe_created=false
   case "$probe_hook:$probe_mode" in
@@ -66,7 +68,18 @@ probe_native_candidate() {
       probe_create="create interface rdma host-if $probe_interface name $probe_vpp_interface mode dv"
       ;;
     af_xdp:zero_copy)
-      probe_create="create interface af_xdp host-if $probe_interface name $probe_vpp_interface zero-copy"
+      # Never create a second socket on an attachment owned by a live
+      # transaction. Reuse its semantic readback without changing it.
+      if active_hardware=$(vppctl show hardware-interfaces "lyroute-$probe_interface" 2>/dev/null) &&
+         printf '%s\n' "$active_hardware" | tr -d '\r' | grep -q "^[[:space:]]*netdev $probe_interface\$"; then
+        if printf '%s\n' "$active_hardware" | grep -q '^[[:space:]]*error ' ||
+           ! printf '%s\n' "$active_hardware" | grep -q 'flags:.*admin-up.*zero-copy'; then
+          return 1
+        fi
+        printf '%s\n' 100
+        return 0
+      fi
+      probe_create="create interface af_xdp host-if $probe_interface name $probe_vpp_interface num-rx-queues all zero-copy"
       ;;
     af_packet:linux_packet_socket)
       # An active AF_PACKET attachment is renamed to lyroute-$iface by the
@@ -96,6 +109,16 @@ probe_native_candidate() {
   if ! vppctl show interface "$probe_vpp_interface" 2>/dev/null | grep -q "^$probe_vpp_interface"; then
     # Only remove an object created by this probe. A failed or duplicate
     # probe must never remove an attachment owned by the apply transaction.
+    vppctl $probe_delete >/dev/null 2>&1 || true
+    active_probe_kind=
+    active_probe_name=
+    return 1
+  fi
+  # Socket creation alone does not exercise the RX wakeup path. Admin-up and
+  # hardware readback must succeed before issuing a capability proof.
+  if ! vppctl set interface state "$probe_vpp_interface" up >/dev/null 2>&1 ||
+     ! probe_hardware=$(vppctl show hardware-interfaces "$probe_vpp_interface" 2>/dev/null) ||
+     printf '%s\n' "$probe_hardware" | grep -q '^[[:space:]]*error '; then
     vppctl $probe_delete >/dev/null 2>&1 || true
     active_probe_kind=
     active_probe_name=
@@ -416,6 +439,27 @@ PY
     LY_ROUTE_VPP_DATA_INTERFACES=$discovered_interfaces
   fi
 fi
+# Older 5x0 installations predate WAN PHY initialization and omit GE2 from
+# their installer inventory. Discover only direct external PCI jacks here;
+# DSA CPU uplinks, child ports, WiFi and the management jack stay excluded.
+case "$(cat "$LY_ROUTE_SYSFS_ROOT/class/dmi/id/board_name" 2>/dev/null || true)" in
+  EDGE520|EDGE540)
+    for net_path in "$LY_ROUTE_SYSFS_ROOT"/class/net/*; do
+      [ -e "$net_path/device" ] || continue
+      board_name=$(basename "$net_path")
+      [ "$board_name" != "$LY_ROUTE_MANAGEMENT_INTERFACE" ] || continue
+      board_pci=$(basename "$(readlink -f "$net_path/device")")
+      case "$board_pci" in
+        0000:00:14.2|0000:00:14.3|0000:04:00.0|0000:04:00.1)
+          case ",$LY_ROUTE_VPP_DATA_INTERFACES," in
+            *",$board_name,"*) ;;
+            *) LY_ROUTE_VPP_DATA_INTERFACES="${LY_ROUTE_VPP_DATA_INTERFACES:+$LY_ROUTE_VPP_DATA_INTERFACES,}$board_name" ;;
+          esac
+          ;;
+      esac
+    done
+    ;;
+esac
 if [ -z "$LY_ROUTE_VPP_DATA_INTERFACES" ]; then
   dataplane_failures=$(append_missing "$dataplane_failures" data_assignment_present)
 fi

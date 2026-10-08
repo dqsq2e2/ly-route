@@ -81,8 +81,11 @@ jobs:
           (cd backend && go test ./internal/httpapi -run '^TestVelo5x0')
           (cd backend && go test ./internal/httpapi -run '^TestSystemCPU')
           (cd backend && go test ./internal/httpapi -run '^TestInterfaceRolePatch')
+          (cd backend && go test ./internal/httpapi -run '^TestWiFi')
+          (cd backend && go test ./internal/runtime/vpp -run '^TestVerifySupplementalOperation')
           node scripts/test-gateway-formatters.mjs
           python3 scripts/test-velo5x0-hardware.py
+          python3 scripts/test-wifi-runtime.py
           python3 scripts/test-hotfix-serial.py
           bash scripts/test-velo5x0-installer.sh
           bash packaging/hardware/velo5x0/glue/tests/check.sh

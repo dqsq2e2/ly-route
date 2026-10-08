@@ -151,7 +151,11 @@
       for (const source of ['cpu', 'wifi', 'board']) {
         const values = (status?.sensors || []).filter((sensor) => sensor.source === source && Number.isFinite(sensor.value)).map((sensor) => sensor.value);
         const value = values.length ? Math.max(...values) : status?.temperatures?.[source];
-        root.querySelector(`[data-fan-temperature="${source}"]`).textContent = Number.isFinite(value) ? `${value.toFixed(1)} °C` : '--';
+        const missing = source === 'wifi' ? ({
+          radio_off: '无线关闭', invalid_reading: '读数异常', unsupported: '固件未支持',
+          no_radio: '未检测到无线', unavailable: '暂未上报', stale: '状态过期'
+        })[status?.sensor_states?.wifi] : '';
+        root.querySelector(`[data-fan-temperature="${source}"]`).textContent = Number.isFinite(value) ? `${value.toFixed(1)} °C` : (missing || '--');
       }
       const error = root.querySelector('[data-fan-status-error]');
       error.textContent = [readError ? `状态读取失败：${readError}` : '', status?.error || ''].filter(Boolean).join(' · ');

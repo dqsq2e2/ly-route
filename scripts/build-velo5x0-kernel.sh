@@ -16,7 +16,7 @@ Build exactly one Bookworm amd64 kernel package, without installing it.
   --help                Show this help.
 
 Requires Debian 12 (Bookworm), amd64, with build prerequisites already installed.
-Linux version, URL, SHA-256 and the four patch filenames cannot be overridden.
+Linux version, URL, SHA-256 and the patch filenames cannot be overridden.
 SOURCE_DATE_EPOCH defaults to 0 for reproducible timestamps.
 The final stdout line is the absolute linux-image*.deb path. Progress goes to stderr.
 EOF
@@ -43,6 +43,7 @@ patches=(
   210-mdio-gpio-clear-level-before-input.patch
   220-xhci-ti-tusb73x0-force-hcrst.patch
   230-dsa-pdata-own-tree.patch
+  240-ath10k-qca988x-ct-temperature.patch
 )
 
 while [ "$#" -gt 0 ]; do
@@ -152,7 +153,7 @@ check_inputs() {
   shopt -s nullglob
   found=("$hardware_dir"/patches/*.patch)
   shopt -u nullglob
-  [ "${#found[@]}" -eq 4 ] || die "exactly four hardware patches are required"
+  [ "${#found[@]}" -eq "${#patches[@]}" ] || die "the exact hardware patch set is required"
   for name in "${patches[@]}"; do
     [ -s "$hardware_dir/patches/$name" ] || die "missing patch: $name"
   done

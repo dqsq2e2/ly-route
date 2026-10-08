@@ -63,6 +63,7 @@ type Velo5x0FanStatus struct {
 	OutputPWM            *float64               `json:"output_pwm"`
 	Temperatures         Velo5x0FanTemperatures `json:"temperatures"`
 	Sensors              []Velo5x0FanSensor     `json:"sensors"`
+	SensorStates         map[string]string      `json:"sensor_states,omitempty"`
 	EffectiveTemperature *float64               `json:"effective_temperature"`
 	Error                string                 `json:"error"`
 	Mode                 string                 `json:"mode"`
@@ -359,6 +360,7 @@ func (api *velo5x0FanAPI) status(config Velo5x0FanConfig, now time.Time) Velo5x0
 		status.Temperatures = Velo5x0FanTemperatures{}
 		status.Sensors = []Velo5x0FanSensor{}
 		status.EffectiveTemperature = nil
+		status.SensorStates = map[string]string{"wifi": "stale"}
 		status.Error = strings.TrimSpace(status.Error + " fan daemon status is stale")
 	}
 	return status

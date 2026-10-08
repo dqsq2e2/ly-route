@@ -182,6 +182,7 @@ type Server struct {
 	firmwareInstallStart          func(firmwareInstallInvocation) error
 	dnsSyncToken                  string
 	velo5x0Fan                    *velo5x0FanAPI
+	wifi                          *wifiAPI
 }
 
 type InterfaceTelemetryCollector interface {
@@ -463,17 +464,21 @@ func newServer(profile product.Profile, options ...Option) *Server {
 		sessions:     newSessionStore(time.Now),
 		gatewayState: newGatewayTelemetryState(),
 		velo5x0Fan:   newVelo5x0FanAPI(os.Getenv("LY_ROUTE_VELO5X0_FAN_ROOT")),
+		wifi:         newWiFiAPI(),
 	}
 	for _, option := range options {
 		option(server)
 	}
 	server.reconcileRuntime(context.Background())
+	server.restoreWiFi()
 	return server
 }
 
 func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/system/fan", server.handleVelo5x0Fan)
+	mux.HandleFunc("/api/v1/wifi", server.handleWiFi)
+	mux.HandleFunc("/api/v1/wifi/scan", server.handleWiFi)
 	if server.profile.ID() == product.Orchestrator().ID() && server.orchestratorRepository != nil {
 		handler, err := orchestratorapi.New(server.orchestratorRepository, orchestratorSessionAccess{server: server}, server.orchestratorRuntime)
 		if err != nil {

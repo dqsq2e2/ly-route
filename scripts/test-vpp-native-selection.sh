@@ -29,7 +29,17 @@ case "$*" in
   'show ly-route smart-qos')
     printf '%s\n' 'state locked' 'algorithm fq-codel' "qualification ${VPPCTL_SMART_QOS_QUALIFICATION:-development-single-worker}"
     ;;
-  show\ hardware-interfaces\ *) printf '%s PCI %s\n' "$3" "${VPPCTL_ACTIVE_PCI:-}" ;;
+  show\ hardware-interfaces\ *)
+    printf '%s PCI %s\n' "$3" "${VPPCTL_ACTIVE_PCI:-}"
+    case "$3" in
+      lyroute-eth1)
+        if [ "${VPPCTL_ACTIVE_AFXDP:-0}" = 1 ]; then
+          printf '  netdev eth1\r\n  flags: admin-up zero-copy syscall-lock\r\n'
+        fi
+        ;;
+      lyroute-proof-*) [ "${VPPCTL_DEVICE_ERROR:-0}" = 0 ] || printf '%s\n' '  error rx poll() failed: Bad file descriptor' ;;
+    esac
+    ;;
   'show threads') printf '%s\n' "${VPPCTL_THREADS:-vpp_main}" ;;
   'show dpdk interface hqos placement') printf '%s\n' "${VPPCTL_HQOS_PLACEMENT:-}" ;;
   create\ interface\ af_xdp*)
@@ -67,6 +77,8 @@ run_check() {
     VPPCTL_PLUGINS="$plugins" \
     VPPCTL_AFXDP_SUCCESS="$afxdp_success" \
     VPPCTL_RDMA_SUCCESS="${VPPCTL_RDMA_SUCCESS:-0}" \
+    VPPCTL_DEVICE_ERROR="${VPPCTL_DEVICE_ERROR:-0}" \
+    VPPCTL_ACTIVE_AFXDP="${VPPCTL_ACTIVE_AFXDP:-0}" \
     LY_ROUTE_VPP_NATIVE_BENCHMARK="$tmp/bin/native-benchmark" \
     LY_ROUTE_RUNTIME_READINESS="$scenario_dir/readiness.json" \
     LY_ROUTE_VPP_CAPABILITY_PROOF="$scenario_dir/proof.json" \
@@ -119,9 +131,16 @@ EOF
 run_check native eth0 eth1 af_xdp_plugin.so 1
 grep -q '"dataplane_state": "native_ready"' "$tmp/native/readiness.json"
 grep -q '"hook":"af_xdp"' "$tmp/native/proof.json"
-grep -Eq 'create interface af_xdp host-if eth1 name lyroute-proof-[0-9]+-[0-9]+-af_xdp zero-copy' "$tmp/native/vppctl.log"
+grep -Eq 'create interface af_xdp host-if eth1 name lyroute-proof-[0-9]+-af_xdp num-rx-queues all zero-copy' "$tmp/native/vppctl.log"
 if grep -q 'host-if eth0' "$tmp/native/vppctl.log"; then
   echo "management interface reached VPP probe" >&2
+  exit 1
+fi
+
+VPPCTL_ACTIVE_AFXDP=1 run_check active-native-crlf eth0 eth1 af_xdp_plugin.so 0
+grep -q '"dataplane_state": "native_ready"' "$tmp/active-native-crlf/readiness.json"
+if grep -q 'create interface af_xdp' "$tmp/active-native-crlf/vppctl.log"; then
+  echo "live AF_XDP readback must not create a competing socket" >&2
   exit 1
 fi
 
@@ -190,10 +209,15 @@ fi
 run_check shared-management eth0 eth0 af_xdp_plugin.so 1 true
 grep -q '"dataplane_state": "native_ready"' "$tmp/shared-management/readiness.json"
 grep -q '"linux_interface":"eth0"' "$tmp/shared-management/proof.json"
-grep -Eq 'create interface af_xdp host-if eth0 name lyroute-proof-[0-9]+-[0-9]+-af_xdp zero-copy' "$tmp/shared-management/vppctl.log"
+grep -Eq 'create interface af_xdp host-if eth0 name lyroute-proof-[0-9]+-af_xdp num-rx-queues all zero-copy' "$tmp/shared-management/vppctl.log"
 
 run_check invalid-shared-mode eth0 eth0 af_xdp_plugin.so 1 shared
 grep -q '"dataplane_state": "dataplane_locked"' "$tmp/invalid-shared-mode/readiness.json"
 grep -q 'management_shared_valid' "$tmp/invalid-shared-mode/readiness.json"
 
 printf 'VPP native selection scenarios passed\n'
+
+VPPCTL_DEVICE_ERROR=1 run_check device-error eth0 eth1 af_xdp_plugin.so 1
+grep -q '"dataplane_state": "dataplane_locked"' "$tmp/device-error/readiness.json"
+grep -q '"proofs":\[\]' "$tmp/device-error/proof.json"
+grep -q 'delete interface af_xdp lyroute-proof-' "$tmp/device-error/vppctl.log"

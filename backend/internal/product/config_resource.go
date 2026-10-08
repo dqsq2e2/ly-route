@@ -16,6 +16,7 @@ const (
 	ConfigResourceTrafficControl      ConfigResource = "traffic_control"
 
 	ConfigResourceSystemMode            ConfigResource = "system_mode"
+	ConfigResourceWiFi                  ConfigResource = "wifi"
 	ConfigResourceWANLink               ConfigResource = "wan_link"
 	ConfigResourceWANGroup              ConfigResource = "wan_group"
 	ConfigResourceRoutePolicy           ConfigResource = "route_policy"
@@ -58,6 +59,7 @@ func (profile Profile) AllowsConfigResource(raw string) bool {
 	if profile.ID() == Gateway().ID() {
 		switch resource {
 		case ConfigResourceSystemMode,
+			ConfigResourceWiFi,
 			ConfigResourceWANLink,
 			ConfigResourceWANGroup,
 			ConfigResourceRoutePolicy,

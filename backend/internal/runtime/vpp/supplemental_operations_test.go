@@ -216,6 +216,17 @@ func TestVerifySupplementalOperationRejectsWrongAFXDPHostNetdev(t *testing.T) {
 	}
 }
 
+func TestVerifySupplementalOperationRejectsAFXDPDeviceError(t *testing.T) {
+	operation := DataplaneAttachOperation("txn-native", NativeAttachment{LinuxInterface: "eth1", VPPInterface: "lyroute-eth1", Hook: NativeHookAFXDP, Mode: NativeModeZeroCopy})
+	results := []VPPCTLCommandResult{
+		{Command: "show hardware-interfaces lyroute-eth1", Stdout: "lyroute-eth1\n  netdev eth1\n  flags: admin-up zero-copy\n  error af_xdp_device_input_refill_db: rx poll() failed: Bad file descriptor"},
+		{Command: "show interface lyroute-eth1", Stdout: "lyroute-eth1 up"},
+	}
+	if err := verifySupplementalOperation(operation, results); err == nil || !strings.Contains(err.Error(), "device error") {
+		t.Fatalf("errored AF_XDP interface accepted: %v", err)
+	}
+}
+
 func TestNativeSupplementalCleanupUsesStockVPPDeleteCommands(t *testing.T) {
 	now := time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
 	plan := nativeSupplementalPlan(now)

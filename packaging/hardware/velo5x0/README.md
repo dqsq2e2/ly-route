@@ -73,7 +73,7 @@ with only a deferred dpkg trigger. There is no custom initramfs hook or board
 service in this package.
 
 `SOURCE_DATE_EPOCH` defaults to zero; build user/host/version and timestamps are
-fixed. The package embeds the original licenses, four patches, final glue,
+fixed. The package embeds the original licenses, five patches, final glue,
 fragment, builder and an input SHA256 manifest in
 `/usr/share/doc/linux-image-6.18.54-velo5x0/`, along with kernel URL/hash,
 compiler and Ly Route revision. Source licensing obligations include the
@@ -109,6 +109,21 @@ C2000 Atom while keeping conservative QEMU and ESXi validation support.
   support without enabling debugfs. A WiFi temperature sensor is registered
   only when the loaded firmware advertises thermal support and provides the
   temperature operation; its presence is not guaranteed by the kernel config.
+  The additional local patch ports the CT 10.1 temperature command/event ABI
+  (feature bit 44, command 0x906d, event 0x9022) from ath10k-ct commit
+  `fcbdb70debc261f9df6734bbb76d81cdc88e0e26`. Only QCA988x on EDGE520/EDGE540
+  prefer the separately supplied `firmware-ct.bin` automatically; absent that
+  file, upstream firmware selection remains unchanged. Unimplemented CT feature
+  bits are ignored rather than advertised as driver support. The hardware rootfs profile downloads
+  CT full-community firmware and requires SHA-256
+  `0723e73558e7187f099219bc5de2152336f27c40aa8ca6f2ed7e4f7cbd6049bd`.
+  This is a bounded thermal ABI port, not the complete ath10k-ct driver.
+  Live EDGE520 testing on 2026-10-08 measured 34/36/36/37/37/38 C with a
+  WPA2 AP running on channel 1. Passive scanning and receive-only monitor mode
+  returned the invalid -15 C firmware value before AP operation; a down radio
+  returns ENETDOWN. Fan control rejects the invalid value and reports unavailable
+  sensors explicitly. This temperature check does not qualify client traffic,
+  WPA3, DHCP or VPP forwarding.
 - AF_XDP sockets, BPF/JIT, network namespaces, cgroups, seccomp, AppArmor,
   Landlock, IPv6, policy routing and hugepages are enabled. VFIO retains the
   classic group/container API; unsafe no-IOMMU mode is disabled.

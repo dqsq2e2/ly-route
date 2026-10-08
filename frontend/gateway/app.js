@@ -15,7 +15,8 @@ const sections = [
     ['route/route_policy_main', '策略路由', 'tabs'],
     ['route/portmap_list', '端口映射', 'table'],
     ['route/dnspolicy_main', 'DNS策略', 'table'],
-    ['network/dhcpsvr_main', 'DHCP服务', 'settings']
+    ['network/dhcpsvr_main', 'DHCP服务', 'settings'],
+    ['network/wifi', 'WiFi设置', 'wifi']
   ]},
   { id: 'behavior', no: '03', title: '行为管理', pages: [
     ['flowcontrol/flowct_main', '流量控制', 'table']
@@ -65,6 +66,8 @@ const gatewayFan = window.LyRouteGatewayFan.create({
   isReadonly: () => state.session?.role !== 'admin',
   onAvailability: () => renderMenu()
 });
+const gatewayWiFi = window.LyRouteGatewayWiFi.create({ apiJSON, safeText, toast,
+  isReadonly: () => state.session?.role !== 'admin' });
 
 function escapeAttr(value) { return safeText(value); }
 function currentPage() { return pageMap.get(state.active) || pageMap.values().next().value; }
@@ -208,10 +211,16 @@ function openPage(id, updateLocation = true) {
 function renderWorkspace() {
   const page = currentPage();
   el.appShell.classList.toggle('fan-workspace-active', page.id === 'system/fan');
+  el.appShell.classList.toggle('wifi-workspace-active', page.id === 'network/wifi');
   if (page.id === 'system/fan' && gatewayFan.isMounted()) {
     gatewayFan.update();
     return;
   }
+  if (page.id === 'network/wifi' && gatewayWiFi.isMounted()) {
+    gatewayWiFi.update();
+    return;
+  }
+  gatewayWiFi.unmount();
   gatewayFan.unmount();
   const objectDisplay = isObjectDisplayPage(page);
   const cardClass = `page-card${objectDisplay ? ' object-display-page' : ''}`;
@@ -245,6 +254,7 @@ function capabilityItems() {
   });
 }
 function renderPageBody(page) {
+  if (page.id === 'network/wifi') return gatewayWiFi.render();
   if (page.id === 'system/fan') return gatewayFan.render();
   if (page.type === 'dashboard') return renderDashboard();
   if (page.type === 'system-overview') return gatewayOverview.renderSystem({ summary: state.controlPlane.telemetry.dashboardSummary || state.controlPlane.telemetry.dashboard, onlineUsers: state.controlPlane.telemetry.onlineUsers, trafficTrend: state.controlPlane.telemetry.trafficTrend, resources: state.controlPlane.resources, runtime: state.controlPlane.runtimeStatus, health: state.controlPlane.health, escape: safeText });
@@ -1151,13 +1161,13 @@ function displayBondName(item) {
 function displayWorkMode(value, role = '') {
   const text = String(value || '').trim().toLowerCase();
   if (!text) return '未识别';
-  if (text === 'kernel_stack') return role === 'management' ? 'Linux管理口' : '未接入VPP';
-  if (text === 'af_xdp') return 'AF_XDP已接入';
-  if (text === 'xdp') return 'XDP已接入';
-  if (text === 'vpp') return 'VPP已接入';
-  if (text === 'vpp_native') return 'VPP已接入';
+  if (text === 'kernel_stack') return role === 'management' ? '管理接口' : '内核网络接口';
+  if (text === 'af_xdp') return 'VPP转发（AF_XDP）';
+  if (text === 'xdp') return 'XDP转发';
+  if (text === 'vpp') return 'VPP转发';
+  if (text === 'vpp_native') return 'VPP转发';
   if (text === 'linux') return 'Linux普通转发';
-  if (text === 'dpdk') return 'DPDK已接入';
+  if (text === 'dpdk') return 'VPP转发（DPDK）';
   if (text === 'bridge') return '桥接转发';
   return value;
 }
@@ -1484,6 +1494,10 @@ function tableColumns(page) {
   return ['名称', '对象/参数', '命中/流量', '备注'];
 }
 function wireWorkspaceEvents(page) {
+  if (page.id === 'network/wifi') {
+    gatewayWiFi.mount(el.workspace.querySelector('[data-wifi-page]'));
+    return;
+  }
   if (page.id === 'system/fan') {
     gatewayFan.mount(el.workspace.querySelector('[data-fan-page]'));
     return;
@@ -2440,12 +2454,12 @@ function interfaceBondPayload() {
 }
 function workModeValueFromDisplay(value) {
   const text = String(value || '').trim();
-  if (text === 'XDP快速路径' || text === 'AF_XDP已接入') return 'af_xdp';
-  if (text === 'XDP已接入') return 'xdp';
-  if (text === 'VPP高速转发' || text === 'VPP已接入') return 'vpp';
-  if (text === 'DPDK已接入') return 'dpdk';
+  if (['XDP快速路径', 'AF_XDP已接入', 'VPP转发（AF_XDP）'].includes(text)) return 'af_xdp';
+  if (['XDP已接入', 'XDP转发'].includes(text)) return 'xdp';
+  if (['VPP高速转发', 'VPP已接入', 'VPP转发'].includes(text)) return 'vpp';
+  if (['DPDK已接入', 'VPP转发（DPDK）'].includes(text)) return 'dpdk';
   if (text === 'Linux普通转发') return 'linux';
-  if (['内核管理通道', 'Linux管理口', '未接入VPP'].includes(text)) return 'kernel_stack';
+  if (['内核管理通道', 'Linux管理口', '未接入VPP', '管理接口', '内核网络接口'].includes(text)) return 'kernel_stack';
   return text || 'vpp';
 }
 function normalizeInterfaceRole(value) {
@@ -3068,6 +3082,7 @@ function setLoginHint(message = defaultLoginHint) {
 function showLogin(message = defaultLoginHint) {
   stopAutoRefresh();
   gatewayFan.stop();
+  gatewayWiFi.unmount();
   state.session = null;
   el.appShell.classList.add('is-hidden');
   el.loginScreen.classList.remove('is-hidden');
@@ -3125,6 +3140,7 @@ async function refreshWanOverviewFast() {
 function showPasswordChange(currentPassword = '') {
   stopAutoRefresh();
   gatewayFan.stop();
+  gatewayWiFi.unmount();
   el.appShell.classList.add('is-hidden');
   el.loginScreen.classList.remove('is-hidden');
   setLoginHint('首次登录必须修改管理员密码。');
@@ -3250,7 +3266,13 @@ async function autoRefresh() {
   if (!canAutoRefresh()) return;
   autoRefreshInFlight = true;
   try {
-    await refreshControlPlane({ silent: true });
+    const page = currentPage();
+    if (page.id === 'system/fan' || page.id === 'network/wifi') return;
+    if (page.type === 'system-overview') {
+      await refreshSystemSummaryFast();
+    } else {
+      await refreshControlPlane({ silent: true });
+    }
   } finally {
     autoRefreshInFlight = false;
   }

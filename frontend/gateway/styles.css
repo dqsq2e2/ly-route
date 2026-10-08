@@ -1089,3 +1089,28 @@ body, button, input, select, textarea { letter-spacing: 0; }
   .fan-help { grid-column: 2; grid-row: 1; }
   .fan-actions.toolbar { flex-wrap: nowrap; justify-content: flex-end; }
 }
+/* Wireless control is separate from the physical Ethernet inventory. */
+.wifi-page { display: grid; gap: 20px; min-width: 0; }
+.wifi-page [data-wifi-error] { color: #a71927; padding: 10px 0; overflow-wrap: anywhere; }
+.wifi-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; max-width: 900px; }
+.wifi-field { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 12px; }
+.wifi-field input:not([type="checkbox"]), .wifi-field select { width: 100%; min-width: 0; height: 34px; border: 1px solid #cdd4db; border-radius: 4px; background: #fff; padding: 0 9px; }
+.wifi-field input[type="checkbox"] { justify-self: start; width: 18px; height: 18px; }
+.wifi-ap-fields { display: contents; }
+.wifi-ap-fields[hidden] { display: none; }
+.wifi-network-state { grid-column: 1 / -1; display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 10px 12px; border-top: 1px solid #e0e5ea; padding-top: 16px; }
+.wifi-form footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+.wifi-page button { min-height: 32px; border: 1px solid #cdd4db; border-radius: 4px; background: #fff; padding: 0 14px; cursor: pointer; }
+.wifi-page button:disabled { opacity: .5; cursor: default; }
+.wifi-page [data-wifi-save] { background: #127f66; border-color: #127f66; color: white; }
+.wifi-results { border-top: 1px solid #e0e5ea; padding-top: 16px; min-width: 0; }
+.wifi-results header { display: flex; justify-content: space-between; align-items: center; }
+.wifi-results h2 { font-size: 15px; margin: 0 0 12px; }
+.wifi-table-wrap { overflow-x: auto; }
+.wifi-results table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.wifi-results td, .wifi-results th { text-align: left; padding: 10px; border-bottom: 1px solid #e0e5ea; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .wifi-form { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .wifi-field { grid-template-columns: 84px minmax(0, 1fr); }
+  .wifi-network-state { grid-template-columns: 84px minmax(0, 1fr); }
+}
