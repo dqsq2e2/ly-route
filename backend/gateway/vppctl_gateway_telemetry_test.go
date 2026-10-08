@@ -110,6 +110,63 @@ func TestParseGatewayNATEISummariesReportsLANConnectionCounts(t *testing.T) {
 	}
 }
 
+func TestVPPCTLGatewayTelemetryIncludesOnlyEnabledBusinessWiFi(t *testing.T) {
+	now := time.Date(2026, 10, 8, 18, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name    string
+		enabled bool
+		mode    string
+		want    int
+	}{
+		{name: "business AP", enabled: true, mode: "ap", want: 2},
+		{name: "disabled AP", enabled: false, mode: "ap", want: 1},
+		{name: "management client", enabled: true, mode: "client", want: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := memoryGatewayTelemetryConfig{documents: map[string][]persistence.ConfigDocument{
+				"interface": {telemetryConfigDocument(t, "interface", "lan0", map[string]any{
+					"id": "lan0", "system_name": "enp0s20f3", "gateway_role": "lan", "cidr": "192.168.88.66/24",
+				})},
+				"wifi": {telemetryConfigDocument(t, "wifi", "radio0", map[string]any{
+					"enabled": test.enabled, "mode": test.mode,
+				})},
+			}}
+			collector := newVPPCTLGatewayTelemetry(store, "vppctl", func() time.Time { return now })
+			collector.run = func(_ context.Context, _ string, args ...string) (string, error) {
+				switch fmt.Sprint(args) {
+				case "[show ip neighbors]":
+					return "1.0 192.168.88.120 D 00:e0:4c:68:02:10 lyroute-enp0s20f3\n" +
+						"2.0 192.168.89.101 D e6:22:fe:ee:3c:6c lywifi-ap\n" +
+						"3.0 192.168.1.1 D 82:5d:fc:a7:14:f1 lyroute-enp4s0f0\n" +
+						"4.0 198.19.255.222 D 02:fe:9f:33:c4:13 lydns86c2bf\n", nil
+				case "[show nat44 sessions]":
+					return "i2o 192.168.89.101 proto TCP port 50001 fib 0\n" +
+						"external host 183.2.172.177:443\n" +
+						"i2o 192.168.88.120 proto TCP port 50002 fib 0\n" +
+						"external host 183.2.172.177:443\n" +
+						"i2o 198.19.255.222 proto UDP port 53001 fib 0\n" +
+						"external host 223.5.5.5:53\n", nil
+				default:
+					return "", nil
+				}
+			}
+			snapshot, err := collector.Collect(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Neighbors) != test.want || len(snapshot.Connections) != test.want {
+				t.Fatalf("neighbors=%#v connections=%#v; want %d business clients", snapshot.Neighbors, snapshot.Connections, test.want)
+			}
+			if snapshot.Neighbors[0].IP != "192.168.88.120" {
+				t.Fatalf("wired neighbor lost: %#v", snapshot.Neighbors)
+			}
+			if test.want == 2 && snapshot.Neighbors[1].IP != "192.168.89.101" {
+				t.Fatalf("Wi-Fi neighbor missing: %#v", snapshot.Neighbors)
+			}
+		})
+	}
+}
+
 func TestParseGatewayNATEIActiveSessionsKeepsOnlyLatestFiveSeconds(t *testing.T) {
 	now := time.Date(2026, 8, 23, 8, 0, 0, 0, time.UTC)
 	output := `NAT44 sessions:

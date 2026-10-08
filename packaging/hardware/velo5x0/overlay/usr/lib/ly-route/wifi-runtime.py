@@ -52,11 +52,15 @@ def prepare_regulatory(country):
     if REGDB.resolve() != REGDB_UPSTREAM.resolve() or signature.resolve() != upstream_signature.resolve():
         command("update-alternatives", "--set", "regulatory.db", str(REGDB_UPSTREAM))
         command("iw", "reg", "reload")
-    command("iw", "reg", "set", country)
-    for _ in range(30):
-        if regulatory_country() == country:
-            return
-        time.sleep(0.1)
+    for attempt in range(2):
+        if attempt:
+            # Reprocess the signed database after a driver hint left an intersection.
+            command("iw", "reg", "reload")
+        command("iw", "reg", "set", country)
+        for _ in range(30):
+            if regulatory_country() == country:
+                return
+            time.sleep(0.1)
     raise RuntimeError("requested regulatory country did not become active")
 
 

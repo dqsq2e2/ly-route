@@ -166,7 +166,7 @@
     const totals = currentTotals(series);
     const colors = new Map([...allSeries].sort((left, right) => left.id.localeCompare(right.id)).map((item, index) => [item.id, palette[index % palette.length]]));
     const activeConnections = Number(options.dashboard.sessions || options.dashboard.connections || 0);
-    const onlineUsers = Number(options.dashboard.online_users || 0);
+    const onlineUsers = onlineIPv4Count(options.onlineUsers);
     return `<div class="traffic-pa-page"><section class="traffic-pa-kpis"><article><span>上行</span><strong>${formatRate(totals.upload)}</strong></article><article><span>下行</span><strong>${formatRate(totals.download)}</strong></article><article><span>活动连接</span><strong>${activeConnections}</strong></article><article><span>在线用户</span><strong>${onlineUsers}</strong></article><article><span>WAN 出口</span><strong>${allSeries.length}</strong></article></section><section class="traffic-pa-toolbar"><div><h2>流量趋势</h2><p>上行与下行流量趋势</p></div><div class="traffic-windows">${windows.map(([value, label]) => `<button type="button" data-traffic-window="${value}" aria-pressed="${options.window === value}">${label}</button>`).join("")}</div></section><section class="traffic-pa-chart-card"><header><h3>上行趋势</h3><div class="traffic-pa-chart-meta">当前 ${formatRate(totals.upload)}</div></header>${directionalChart(series, "upload", colors, options.escape)}</section><section class="traffic-pa-chart-card"><header><h3>下行趋势</h3><div class="traffic-pa-chart-meta">当前 ${formatRate(totals.download)}</div></header>${directionalChart(series, "download", colors, options.escape)}</section></div>`;
   }
 
@@ -206,7 +206,7 @@
 
   function onlineIPv4Count(payload) {
     const items = Array.isArray(payload) ? payload : Array.isArray(payload?.items) ? payload.items : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.data?.items) ? payload.data.items : [];
-    return items.filter((item) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(String(item.ip || item.address || item.user || "").trim())).length;
+    return items.filter((item) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(String(item.ip || item.ip_address || item.address || item.user || "").trim())).length;
   }
 
   function wanTrendModel(trend) {

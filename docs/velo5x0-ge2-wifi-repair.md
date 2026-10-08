@@ -90,3 +90,11 @@ was performed. 1.1.1.1:443 still times out on both clients; this particular
 destination remains unresolved. AliDNS HTTPS returned 400 without a DNS
 query payload, proving TLS/HTTP reachability, not successful DoH resolution.
 No claim is made that every Internet destination is reachable.
+
+## Subsequent Repair
+
+The earlier 5 GHz hardware-limit interpretation was superseded by driver
+reinitialization with the trusted regulatory database. Non-DFS 5 GHz AP,
+80 MHz client association and HTTPS now pass. See
+velo5x0-online-users-wifi5g-repair.md for the root cause, online-user count
+fix and newer acceptance scope.

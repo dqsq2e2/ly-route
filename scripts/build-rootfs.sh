@@ -399,6 +399,10 @@ elif command -v mmdebstrap >/dev/null 2>&1; then
   fi
   [ -z "$extra_packages" ] || include="$include,$extra_packages"
   mmdebstrap --architectures="$arch" --variant=minbase --components="$components" --include="$include" "$suite" "$rootfs" "$mirror"
+  if [ "$hardware" = velo5x0 ]; then
+    # The custom kernel must trust regdb before the wireless driver first probes.
+    chroot "$rootfs" update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream
+  fi
 else
   product_build_fail "mmdebstrap is required for a complete rootfs. Install it or set LY_ROUTE_ROOTFS_ALLOW_TAR_ONLY=1 for scaffold validation."
 fi

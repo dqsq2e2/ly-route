@@ -188,6 +188,32 @@ class WiFiTests(unittest.TestCase):
         with patch.object(wifi, "command", return_value="phy#0\ncountry CN: DFS-FCC\n"):
             self.assertEqual(wifi.regulatory_country(), "")
 
+    def test_regulatory_setup_reloads_driver_intersection_then_requires_real_country(self):
+        with tempfile.TemporaryDirectory() as directory:
+            firmware = Path(directory)
+            upstream = firmware / "regulatory.db-upstream"
+            upstream.write_bytes(b"database")
+            signature = firmware / "regulatory.db.p7s-upstream"
+            signature.write_bytes(b"signature")
+            database = firmware / "regulatory.db"
+            database.symlink_to(upstream)
+            (firmware / "regulatory.db.p7s").symlink_to(signature)
+            with patch.object(wifi, "REGDB", database), patch.object(wifi, "REGDB_UPSTREAM", upstream), \
+                    patch.object(wifi, "command", return_value="") as command, \
+                    patch.object(wifi.time, "sleep"), \
+                    patch.object(wifi, "regulatory_country", side_effect=["98"] * 30 + ["CN"]):
+                wifi.prepare_regulatory("CN")
+            self.assertEqual([call.args for call in command.call_args_list], [
+                ("iw", "reg", "set", "CN"), ("iw", "reg", "reload"), ("iw", "reg", "set", "CN"),
+            ])
+
+    def test_image_selects_trusted_regdb_before_first_wireless_probe(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts/build-rootfs.sh").read_text()
+        self.assertIn(
+            'chroot "$rootfs" update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream',
+            source,
+        )
+
     def test_capabilities_preserve_real_disabled_no_ir_and_dfs_flags(self):
         raw = ("Supported interface modes:\n\t * managed\n\t * AP\n"
                "\tVHT Capabilities (0x123):\n"
