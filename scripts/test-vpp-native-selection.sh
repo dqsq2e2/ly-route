@@ -1,6 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
+if [ "$(id -u)" -ne 0 ]; then
+  printf '%s\n' 'Run this fixture as root: active dataplane state must remain root-owned.' >&2
+  exit 2
+fi
+
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tmp=$(mktemp -d)
 cleanup() {

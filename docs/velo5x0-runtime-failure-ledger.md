@@ -77,7 +77,13 @@ installer source-validation step failed. The complete source-validation
 sequence passed locally. Direct log/artifact downloads hit TLS EOFs at the
 Actions storage endpoint; the optional repair-evidence job retrieves the
 original failure log through CI and preserves the verified kernel separately.
-The installer build failure has not yet been diagnosed or cleared.
+The original log was recovered by CI. Failure occurred in
+test-vpp-native-selection.sh: its active-DPDK fixture was created by the
+unprivileged runner, while active-dpdk-state.py intentionally accepts only
+root-owned state files. The same failure was reproduced as nobody at the
+dpdk-active assertion. CI now runs this isolated fixture with sudo, and the
+fixture rejects a non-root invocation explicitly. The production ownership
+guard is unchanged. A new full build is required to clear the failed run.
 
 The broader httpapi suite timed out in
 TestGatewayTelemetryIgnoresOlderCompletionAfterNewerSuccess: its fixture

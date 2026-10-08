@@ -186,7 +186,7 @@ jobs:
           python3 scripts/test-velo5x0-hardware.py
           python3 scripts/test-wifi-runtime.py
           python3 scripts/test-vpp-apply-af-xdp.py
-          bash scripts/test-vpp-native-selection.sh
+          sudo bash scripts/test-vpp-native-selection.sh
           python3 scripts/test-hotfix-serial.py
           bash scripts/test-hotfix-kernel.sh
           bash scripts/test-velo5x0-installer.sh
