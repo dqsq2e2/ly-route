@@ -59,9 +59,9 @@ int main(int argc, char **argv) {
     size_t length = make_query(query, "updates.example");
     require_port(query, length, (const struct sockaddr *)&client4, 12000);
     require_port(query, length, (const struct sockaddr *)&client6, 12000);
-    require_port(query, length, (const struct sockaddr *)&outside4, 53);
+    require_port(query, length, (const struct sockaddr *)&outside4, 1053);
 
-    int default_upstream = open_upstream(53, SOCK_DGRAM);
+    int default_upstream = open_upstream(1053, SOCK_DGRAM);
     if (default_upstream < 0) {
         fputs("default SmartDNS upstream could not be opened\n", stderr);
         return 8;
@@ -71,8 +71,8 @@ int main(int argc, char **argv) {
     char default_peer_address[INET_ADDRSTRLEN] = {0};
     if (getpeername(default_upstream, (struct sockaddr *)&default_peer, &default_peer_length) != 0 ||
         !inet_ntop(AF_INET, &default_peer.sin_addr, default_peer_address, sizeof(default_peer_address)) ||
-        strcmp(default_peer_address, "127.0.0.53") != 0 || ntohs(default_peer.sin_port) != 53) {
-        fputs("default SmartDNS upstream is not 127.0.0.53:53\n", stderr);
+        strcmp(default_peer_address, "127.0.0.1") != 0 || ntohs(default_peer.sin_port) != 1053) {
+        fputs("default SmartDNS upstream is not 127.0.0.1:1053\n", stderr);
         return 9;
     }
     libc_close(default_upstream);

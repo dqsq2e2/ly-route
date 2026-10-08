@@ -1,7 +1,8 @@
 [Unit]
-Description=Ly Route wireless management radio
-After=ly-route-velo5x0-board.service systemd-networkd.service
-Requires=ly-route-velo5x0-board.service
+Description=Ly Route wireless VPP business AP and management client
+After=ly-route-velo5x0-board.service systemd-networkd.service vpp.service
+Requires=ly-route-velo5x0-board.service vpp.service
+PartOf=vpp.service
 ConditionPathExists=/run/ly-route/wifi/config.json
 
 [Service]

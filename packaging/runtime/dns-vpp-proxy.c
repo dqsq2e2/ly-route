@@ -37,6 +37,7 @@ static int first_udp_response = 1;
 #define MAX_DNS_NAME 255
 #define UPSTREAM_ATTEMPTS 3
 #define SERVFAIL_RETRY_DELAY_US 1200000
+#define SMARTDNS_DEFAULT_PORT 1053
 struct source_route {
     int family;
     uint8_t address[16];
@@ -256,9 +257,8 @@ static int domain_matches(const struct source_route *route, const char *domain) 
 static int source_route_port(const uint8_t *query, size_t length, const struct sockaddr *client) {
     char domain[MAX_DNS_NAME + 1];
     if (refresh_source_routes() < 0 || parse_query_domain(query, length, domain) < 0) return -1;
-    // The normal SmartDNS listener is the loopback stub at 127.0.0.53:53.
-    // Source-route entries use dedicated 127.0.0.1 ports and override this.
-    int port = 53;
+    // Match the loopback listener installed by build-rootfs.sh.
+    int port = SMARTDNS_DEFAULT_PORT;
     for (size_t i = 0; i < source_route_count; i++) {
         if (domain_matches(&source_routes[i], domain) && source_matches(&source_routes[i], client)) {
             port = source_routes[i].port;
@@ -286,7 +286,7 @@ static int open_upstream(uint16_t port, int type) {
 		.sin_family = AF_INET,
 		.sin_port = htons(port),
 	};
-	const char *host = port == 53 ? "127.0.0.53" : "127.0.0.1";
+	const char *host = "127.0.0.1";
 	if (inet_pton(AF_INET, host, &address.sin_addr) != 1) return -1;
 	int fd = libc_socket(AF_INET, type, 0);
 	if (fd < 0 || libc_connect(fd, (const struct sockaddr *)&address, sizeof(address)) < 0) {

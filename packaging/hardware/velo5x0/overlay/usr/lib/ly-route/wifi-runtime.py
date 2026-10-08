@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Single-radio management AP/client. Business traffic is never Linux-routed."""
+"""Single-radio VPP business AP and management client."""
 import argparse
 import hashlib
 import ipaddress
@@ -18,6 +18,16 @@ RUN = Path("/run/ly-route/wifi")
 CONFIG = RUN / "config.json"
 NETWORK = Path("/run/systemd/network/05-ly-route-wifi.network")
 AP_ADDRESS = "192.168.89.1/24"
+AP_SUBNET = "192.168.89.0/24"
+BRIDGE = "lywifi-br"
+DATA_HOST = "lywifi-data"
+CONTROL_HOST = "lywifi-host"
+VPP_INTERFACE = "lywifi-ap"
+TAP_ID = 3800
+AP_MAC = "02:4c:59:89:00:01"
+BUSINESS_STATE = "business.json"
+REGDB = Path("/lib/firmware/regulatory.db")
+REGDB_UPSTREAM = Path("/lib/firmware/regulatory.db-upstream")
 
 
 def command(*args, timeout=12, check=True):
@@ -25,6 +35,29 @@ def command(*args, timeout=12, check=True):
     if check and result.returncode:
         raise RuntimeError("wireless command failed: " + args[0])
     return result.stdout
+
+
+def regulatory_country():
+    text = command("iw", "reg", "get")
+    match = re.search(r"^global\ncountry ([A-Z0-9]{2}):", text, re.M)
+    return match[1] if match else ""
+
+
+def prepare_regulatory(country):
+    # This board's upstream kernel trusts upstream regdb keys, not Debian's key.
+    upstream_signature = REGDB_UPSTREAM.with_name("regulatory.db.p7s-upstream")
+    signature = REGDB.with_name("regulatory.db.p7s")
+    if not REGDB_UPSTREAM.is_file() or not upstream_signature.is_file():
+        raise RuntimeError("signed upstream regulatory database unavailable")
+    if REGDB.resolve() != REGDB_UPSTREAM.resolve() or signature.resolve() != upstream_signature.resolve():
+        command("update-alternatives", "--set", "regulatory.db", str(REGDB_UPSTREAM))
+        command("iw", "reg", "reload")
+    command("iw", "reg", "set", country)
+    for _ in range(30):
+        if regulatory_country() == country:
+            return
+        time.sleep(0.1)
+    raise RuntimeError("requested regulatory country did not become active")
 
 
 def radio():
@@ -52,6 +85,110 @@ def atomic(path, content):
     finally:
         if name and Path(name).exists():
             Path(name).unlink()
+
+
+def vpp(text, check=True, result=""):
+    output = command("vppctl", text, check=check).strip()
+    if check and output and output != result:
+        raise RuntimeError("wireless VPP operation failed")
+    return output
+
+
+def business_status(config):
+    result = {"state": "disabled", "ready": False, "interface": VPP_INTERFACE,
+              "gateway": AP_ADDRESS.split("/")[0], "dns": AP_ADDRESS.split("/")[0]}
+    if config.get("mode") != "ap":
+        result["state"] = "management_only"
+        return result
+    if not config.get("enabled"):
+        return result
+    result["state"] = "unavailable"
+    try:
+        addresses = command("vppctl", "show interface address")
+        nat = command("vppctl", "show nat44 interfaces")
+        dns = command("vppctl", "show ly-route dns-intercept")
+        features = command("vppctl", "show interface " + VPP_INTERFACE + " features")
+        paired = command("vppctl", "show lcp")
+        has_address = bool(re.search(r"^" + VPP_INTERFACE + r" \(up\):\n\s+L3 " +
+                                     re.escape(AP_ADDRESS) + r"(?:\s|$)", addresses, re.M))
+        has_inside = bool(re.search(r"^\s*" + VPP_INTERFACE + r"\s+in\s*$", nat, re.M))
+        has_outside = bool(re.search(r"^\s*\S+\s+out\s*$", nat, re.M))
+        has_dns = "enabled 1" in dns and "ly-route-dns-intercept-ip4" in features
+        has_pair = any(VPP_INTERFACE in line.split() and CONTROL_HOST in line.split()
+                       for line in paired.splitlines())
+        result["ready"] = has_address and has_inside and has_outside and has_dns and has_pair
+        result["state"] = "forwarding_ready" if result["ready"] else "waiting_for_dataplane"
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        pass
+    return result
+
+
+def reconcile_business():
+    nat = command("vppctl", "show nat44 interfaces")
+    if re.search(r"^\s*\S+\s+out\s*$", nat, re.M):
+        if not re.search(r"^\s*" + VPP_INTERFACE + r"\s+in\s*$", nat, re.M):
+            vpp("set interface nat44 in " + VPP_INTERFACE)
+    dns = command("vppctl", "show ly-route dns-intercept")
+    if "enabled 1" in dns:
+        vpp("ip route add table 100 " + AP_SUBNET + " via " + VPP_INTERFACE)
+        # Reuse the global DNS service FIB without replacing the wired LAN owner.
+        vpp("set interface feature " + VPP_INTERFACE +
+            " ly-route-dns-intercept-ip4 arc ip4-unicast")
+
+
+def start_business(interface):
+    state = RUN / BUSINESS_STATE
+    addresses = command("vppctl", "show interface address")
+    existing = bool(re.search(r"^" + VPP_INTERFACE + r" \(", addresses, re.M))
+    if existing and not state.exists():
+        raise RuntimeError("wireless VPP interface is not owned by this service")
+    if not state.exists():
+        for name in (BRIDGE, DATA_HOST, CONTROL_HOST):
+            if (Path("/sys/class/net") / name).exists():
+                raise RuntimeError("wireless handoff interface is already in use")
+    atomic(state, json.dumps({"interface": interface, "vpp_interface": VPP_INTERFACE}))
+    atomic(NETWORK, "[Match]\nName=" + " ".join((interface, BRIDGE, DATA_HOST, CONTROL_HOST)) +
+           "\n[Network]\nDHCP=no\nIPv6AcceptRA=no\nLinkLocalAddressing=no\nKeepConfiguration=static\n")
+    command("networkctl", "reload")
+    command("networkctl", "reconfigure", interface)
+    if not (Path("/sys/class/net") / BRIDGE).exists():
+        command("ip", "link", "add", "name", BRIDGE, "type", "bridge")
+    command("ip", "link", "set", "dev", BRIDGE, "up")
+    if not existing:
+        vpp("create tap id " + str(TAP_ID) + " if-name " + VPP_INTERFACE +
+            " hw-addr " + AP_MAC + " host-if-name " + DATA_HOST +
+            " host-mtu-size 1500", result=VPP_INTERFACE)
+    paired = command("vppctl", "show lcp")
+    if not any(VPP_INTERFACE in line.split() and CONTROL_HOST in line.split()
+               for line in paired.splitlines()):
+        vpp("lcp create " + VPP_INTERFACE + " host-if " + CONTROL_HOST)
+    vpp("set interface state " + VPP_INTERFACE + " up")
+    vpp("set interface mtu 1500 " + VPP_INTERFACE)
+    if not re.search(r"^" + VPP_INTERFACE + r" \(up\):\n\s+L3 " +
+                     re.escape(AP_ADDRESS) + r"(?:\s|$)", addresses, re.M):
+        vpp("set interface ip address " + VPP_INTERFACE + " " + AP_ADDRESS)
+    command("ip", "link", "set", "dev", DATA_HOST, "master", BRIDGE)
+    for name in (DATA_HOST, CONTROL_HOST):
+        command("ip", "link", "set", "dev", name, "mtu", "1500", "up")
+    command("ip", "address", "replace", AP_ADDRESS, "dev", CONTROL_HOST)
+    reconcile_business()
+
+
+def stop_business(interface):
+    state = RUN / BUSINESS_STATE
+    if not state.exists():
+        return
+    for text in (
+        "set interface feature " + VPP_INTERFACE + " ly-route-dns-intercept-ip4 arc ip4-unicast disable",
+        "ip route del table 100 " + AP_SUBNET + " via " + VPP_INTERFACE,
+        "set interface nat44 in " + VPP_INTERFACE + " del",
+        "lcp delete " + VPP_INTERFACE,
+        "delete tap " + VPP_INTERFACE,
+    ):
+        vpp(text, check=False)
+    command("ip", "link", "set", "dev", interface, "nomaster", check=False)
+    command("ip", "link", "delete", "dev", BRIDGE, check=False)
+    state.unlink(missing_ok=True)
 
 
 def capabilities(phy):
@@ -115,13 +252,21 @@ def status():
                 for key in ("signal", "rx bytes", "tx bytes", "rx bitrate", "tx bitrate", "connected time"):
                     if line.strip().startswith(key + ":"):
                         current[key.replace(" ", "_")] = line.split(":", 1)[1].strip()
+    business = business_status(config)
+    if mode == "ap" and config.get("enabled"):
+        control = json.loads(command("ip", "-j", "address", "show", "dev", CONTROL_HOST,
+                                     check=False) or "[]")
+        if control:
+            link = control[0]
     return {"interface": interface, "phy": phy, "driver": "ath10k_pci",
             "state": state, "mode": mode, "ssid": connection.get("ssid", ""),
             "bssid": connection.get("bssid", ""),
             "frequency": connection.get("freq", ""),
             "addresses": [item["local"] for item in link.get("addr_info", []) if item["family"] == "inet"],
             "temperature": temperature(), "stations": stations, "rfkill": blocked,
-            "capabilities": capabilities(phy), "network": "management_only",
+            "capabilities": capabilities(phy),
+            "regulatory": {"requested": config.get("country", ""), "active": regulatory_country()},
+            "network": "business_lan" if mode == "ap" else "management_only", "business": business,
             "service": command("systemctl", "is-active", "ly-route-wifi.service", check=False).strip()}
 
 
@@ -181,7 +326,8 @@ def hostapd_config(config, interface):
     channel, width = config["channel"], config["width"]
     if config["band"] == "2g" and width == 80:
         raise ValueError("80 MHz requires 5 GHz")
-    lines = ["driver=nl80211", "interface=" + interface, "ctrl_interface=" + str(RUN / "ctrl"),
+    lines = ["driver=nl80211", "interface=" + interface, "bridge=" + BRIDGE,
+             "ctrl_interface=" + str(RUN / "ctrl"),
              "ssid2=" + config["ssid"].encode().hex(), "country_code=" + config["country"],
              "ieee80211d=1", "channel=" + str(channel), "hw_mode=" + ("g" if config["band"] == "2g" else "a"),
              "wmm_enabled=1", "ieee80211n=1", "auth_algs=1", "wpa=2", "rsn_pairwise=CCMP",
@@ -226,12 +372,26 @@ def supplicant_config(config):
 
 
 def stop_network(interface):
+    stop_business(interface)
     if NETWORK.exists():
         NETWORK.unlink()
         command("networkctl", "reload", check=False)
         command("networkctl", "reconfigure", interface, check=False)
     command("ip", "address", "flush", "dev", interface, "scope", "global", check=False)
     command("ip", "link", "set", "dev", interface, "down", check=False)
+
+
+def ap_dhcp_config():
+    gateway = AP_ADDRESS.split("/")[0]
+    return {"Dhcp4": {
+        "interfaces-config": {"interfaces": [CONTROL_HOST]},
+        "lease-database": {"type": "memfile", "name": str(RUN / "leases.csv"), "persist": True},
+        "valid-lifetime": 3600,
+        "subnet4": [{"id": 89, "subnet": AP_SUBNET, "interface": CONTROL_HOST,
+                     "pools": [{"pool": "192.168.89.100 - 192.168.89.200"}],
+                     "option-data": [{"name": "routers", "data": gateway},
+                                     {"name": "domain-name-servers", "data": gateway}]}]
+    }}
 
 
 def run():
@@ -250,18 +410,13 @@ def run():
     try:
         if not config["enabled"]:
             return
-        command("iw", "reg", "set", config["country"])
+        prepare_regulatory(config["country"])
         command("ip", "link", "set", "dev", interface, "up")
         if config["mode"] == "ap":
+            start_business(interface)
             atomic(RUN / "hostapd.conf", hostapd_config(config, interface))
-            command("ip", "address", "replace", AP_ADDRESS, "dev", interface)
-            leases = RUN / "leases.csv"
-            kea = {"Dhcp4": {"interfaces-config": {"interfaces": [interface]},
-                            "lease-database": {"type": "memfile", "name": str(leases), "persist": True},
-                            "valid-lifetime": 3600,
-                            "subnet4": [{"id": 89, "subnet": "192.168.89.0/24", "interface": interface,
-                                         "pools": [{"pool": "192.168.89.100 - 192.168.89.200"}]}]}}
-            atomic(RUN / "kea.json", json.dumps(kea))
+            atomic(RUN / "kea.json", json.dumps(ap_dhcp_config()))
+            command("kea-dhcp4", "-t", str(RUN / "kea.json"))
             commands = [["hostapd", str(RUN / "hostapd.conf")], ["kea-dhcp4", "-c", str(RUN / "kea.json")]]
         else:
             atomic(RUN / "supplicant.conf", supplicant_config(config))
@@ -271,10 +426,18 @@ def run():
             command("networkctl", "reconfigure", interface)
             commands = [["wpa_supplicant", "-D", "nl80211", "-i", interface, "-c", str(RUN / "supplicant.conf")]]
         for args in commands:
-            processes.append(subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            environment = dict(os.environ, KEA_PIDFILE_DIR=str(RUN), KEA_LOCKFILE_DIR=str(RUN))
+            processes.append(subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                              env=environment))
+        next_reconcile = 0
         while not stopping:
             if any(process.poll() is not None for process in processes):
                 raise RuntimeError("wireless child service exited")
+            if config["mode"] == "ap" and time.monotonic() >= next_reconcile:
+                if not (Path("/sys/class/net") / DATA_HOST).exists():
+                    raise RuntimeError("wireless VPP handoff disappeared")
+                reconcile_business()
+                next_reconcile = time.monotonic() + 5
             time.sleep(0.5)
     finally:
         for process in processes:
@@ -300,8 +463,7 @@ def apply(config):
         if any(item.get("type") == "wlan" and
                (item.get("soft") == "blocked" or item.get("hard") == "blocked") for item in blocked):
             raise RuntimeError("wireless radio is blocked")
-        command("iw", "reg", "set", config["country"])
-        time.sleep(0.3)
+        prepare_regulatory(config["country"])
         if config["mode"] == "ap":
             subnet = ipaddress.ip_network(AP_ADDRESS, strict=False)
             for link in json.loads(command("ip", "-j", "address", "show")):
@@ -310,7 +472,8 @@ def apply(config):
                 for address in link.get("addr_info", []):
                     if address["family"] == "inet" and subnet.overlaps(ipaddress.ip_network(
                             address["local"] + "/" + str(address["prefixlen"]), strict=False)):
-                        raise ValueError("wireless management subnet overlaps an existing interface")
+                        if link["ifname"] != CONTROL_HOST:
+                            raise ValueError("wireless business subnet overlaps an existing interface")
             caps = capabilities(phy)
             candidates = [item for item in caps["channels"] if item["band"] == config["band"] and
                           item["channel"] == config["channel"] and not item["disabled"] and
