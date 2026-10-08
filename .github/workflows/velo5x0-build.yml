@@ -48,14 +48,26 @@ jobs:
       actions: read
       checks: write
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      EVIDENCE_RUN: ${{ inputs.evidence_run }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Recover the source failure and verified kernel
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          EVIDENCE_RUN: ${{ inputs.evidence_run }}
+      - name: Recover the source failure
         run: |
           set -euo pipefail
+          exec 2> >(tee evidence-error.log >&2)
+          report_error() {
+            detail=$(tail -c 2000 evidence-error.log)
+            detail=${detail//'%'/'%25'}
+            detail=${detail//$'\n'/'%0A'}
+            detail=${detail//$'\r'/'%0D'}
+            echo "::error title=Source evidence retrieval::line $1: $2; $detail"
+          }
+          trap 'report_error "$LINENO" "$BASH_COMMAND"' ERR
           [[ "$EVIDENCE_RUN" =~ ^[0-9]+$ ]]
           gh api "repos/$GH_REPO/actions/runs/$EVIDENCE_RUN" > run.json
           test "$(jq -r .head_branch run.json)" = 5x0
@@ -68,6 +80,25 @@ jobs:
           jq -n --arg sha "$revision" --rawfile summary source-failure-tail.log \
             '{name:"5x0 repair evidence",head_sha:$sha,status:"completed",conclusion:"neutral",output:{title:"Original installer failure log",summary:("```\n"+$summary+"\n```")}}' > report.json
           gh api --method POST "repos/$GH_REPO/check-runs" --input report.json
+      - name: Preserve the verified kernel
+        if: always()
+        run: |
+          set -euo pipefail
+          exec 2> >(tee kernel-error.log >&2)
+          report_error() {
+            detail=$(tail -c 2000 kernel-error.log)
+            detail=${detail//'%'/'%25'}
+            detail=${detail//$'\n'/'%0A'}
+            detail=${detail//$'\r'/'%0D'}
+            echo "::error title=Kernel evidence retrieval::line $1: $2; $detail"
+          }
+          trap 'report_error "$LINENO" "$BASH_COMMAND"' ERR
+          [[ "$EVIDENCE_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$EVIDENCE_RUN" > run.json
+          test "$(jq -r .head_branch run.json)" = 5x0
+          test "$(jq -r .path run.json)" = .github/workflows/velo5x0-build.yml
+          revision=$(jq -r .head_sha run.json)
+          gh api "repos/$GH_REPO/actions/runs/$EVIDENCE_RUN/jobs" > jobs.json
           test "$(jq -r '.jobs[] | select(.name == "kernel") | .conclusion' jobs.json)" = success
           gh run download "$EVIDENCE_RUN" -n velo5x0-kernel -D kernel-debs
           (cd kernel-debs && sha256sum -c ./*.sha256)
@@ -81,7 +112,7 @@ jobs:
               --title "5x0 kernel repair ${revision:0:12}" \
               --notes "Verified kernel from CI run $EVIDENCE_RUN. Diagnostic hardware hotfix only, not a completed installer release."
           fi
-          gh release upload "$tag" kernel-debs/*.deb kernel-debs/*.sha256 installer.log --clobber
+          gh release upload "$tag" kernel-debs/*.deb kernel-debs/*.sha256 --clobber
           echo "kernel_release_tag=$tag" >> "$GITHUB_STEP_SUMMARY"
 
   kernel:
