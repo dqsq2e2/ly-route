@@ -259,5 +259,5 @@
     </div>`;
   }
 
-  window.LyRouteGatewayOverview = Object.freeze({ renderSystem, renderTraffic, wireTraffic });
+  window.LyRouteGatewayOverview = Object.freeze({ renderSystem, renderTraffic, wireTraffic, formatRate, formatBytes });
 }());

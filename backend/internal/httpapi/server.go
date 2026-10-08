@@ -3365,8 +3365,19 @@ func (server *Server) handleDesiredMutation(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+	if resourceType == "interface" && strings.TrimSpace(explicitID) != "" {
+		explicitID = server.resolveInterfaceID(r.Context(), explicitID)
+	}
 	if r.Method == http.MethodPatch && strings.TrimSpace(explicitID) != "" {
 		current, exists, err := server.desiredItem(r.Context(), resourceType, explicitID)
+		if err == nil && !exists && resourceType == "interface" {
+			_, exists, _, err = server.interfaceRuntimeItem(r.Context(), explicitID)
+			if exists {
+				// Discovery does not create desired records. Seed identity only;
+				// runtime counters and link state must not become configuration.
+				current = map[string]any{"id": explicitID, "name": explicitID}
+			}
+		}
 		if err != nil {
 			writeError(w, r, http.StatusInternalServerError, "desired_state_read_failed", err.Error())
 			return
@@ -4642,39 +4653,6 @@ func readSystemSummary() (map[string]any, controlapi.CapabilityState) {
 		return summary, controlapi.CapabilityState{Name: "system_summary", Available: false, State: controlapi.CapabilityDegraded, Reason: strings.Join(reasons, "; ")}
 	}
 	return summary, controlapi.CapabilityState{Name: "system_summary", Available: true, State: controlapi.CapabilityAvailable}
-}
-
-func parseProcStat() (float64, error) {
-	content, err := os.ReadFile("/proc/stat")
-	if err != nil {
-		return 0, fmt.Errorf("/proc/stat unavailable: %w", err)
-	}
-	lines := strings.Split(string(content), "\n")
-	if len(lines) == 0 || !strings.HasPrefix(lines[0], "cpu ") {
-		return 0, fmt.Errorf("/proc/stat missing aggregate cpu row")
-	}
-	fields := strings.Fields(lines[0])
-	if len(fields) < 8 {
-		return 0, fmt.Errorf("/proc/stat aggregate cpu row is incomplete")
-	}
-	values := make([]uint64, 0, len(fields)-1)
-	var total uint64
-	for _, field := range fields[1:] {
-		value, err := strconv.ParseUint(field, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("/proc/stat has invalid cpu counter %q", field)
-		}
-		values = append(values, value)
-		total += value
-	}
-	if total == 0 {
-		return 0, fmt.Errorf("/proc/stat aggregate cpu total is zero")
-	}
-	idle := values[3]
-	if len(values) > 4 {
-		idle += values[4]
-	}
-	return round2(float64(total-idle) * 100 / float64(total)), nil
 }
 
 func parseProcMeminfo() (map[string]any, error) {
@@ -8597,6 +8575,10 @@ func (server *Server) mergeInterfaceInventory(ctx context.Context, primary, seco
 			if _, vppRuntime := clone["vpp_interface"]; vppRuntime {
 				for _, field := range []string{"vpp_interface", "active_path", "work_mode", "runtime_state", "link_state", "rx_bps", "tx_bps", "rx_pps", "tx_pps", "rx_bytes", "tx_bytes", "rx_packets", "tx_packets", "sessions"} {
 					if value, exists := clone[field]; exists {
+						if field == "link_state" && stringField(merged[index], "port_label") != "" {
+							merged[index]["vpp_link_state"] = value
+							continue
+						}
 						merged[index][field] = value
 					}
 				}
@@ -8725,6 +8707,11 @@ func (server *Server) displayInterfaceName(ctx context.Context, actual string) s
 		return ""
 	}
 	items := server.interfaceAliasSnapshot(ctx)
+	for _, item := range items {
+		if stringField(item, "id") == actual && stringField(item, "port_label") != "" {
+			return stringField(item, "port_label")
+		}
+	}
 	management := server.managementInterfaceID(ctx)
 	ordered := make([]string, 0, len(items))
 	if management != "" {
@@ -8770,17 +8757,27 @@ func localInterfaceInventory() []map[string]any {
 		return nil
 	}
 	items := make([]map[string]any, 0, len(entries))
+	hardware, _ := os.ReadFile("/etc/ly-route/hardware")
 	for _, entry := range entries {
 		name := strings.TrimSpace(entry.Name())
 		if name == "" || name == "lo" {
 			continue
 		}
-		if _, err := net.InterfaceByName(name); err != nil {
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
 			continue
 		}
 		path := filepath.Join("/sys/class/net", name)
 		if _, err := os.Stat(filepath.Join(path, "device")); err != nil && !envBoolOrDefault("LY_ROUTE_INCLUDE_VIRTUAL_INTERFACES", false) {
 			continue
+		}
+		label, visible := hostInterfacePortLabel(path, name, strings.TrimSpace(string(hardware)))
+		if !visible {
+			continue
+		}
+		adminState := "down"
+		if iface.Flags&net.FlagUp != 0 {
+			adminState = "up"
 		}
 		mtu := 1500
 		if data, err := os.ReadFile(filepath.Join(path, "mtu")); err == nil {
@@ -8792,7 +8789,11 @@ func localInterfaceInventory() []map[string]any {
 		if data, err := os.ReadFile(filepath.Join(path, "operstate")); err == nil {
 			linkState = strings.TrimSpace(string(data))
 		}
-		items = append(items, map[string]any{"id": name, "name": name, "admin_state": "up", "link_state": linkState, "speed": localInterfaceSpeed(path), "mtu": mtu, "mac": localInterfaceMAC(name), "addresses": localInterfaceAddresses(name), "work_mode": "kernel_stack", "active_path": "kernel_stack", "mode_role": map[string]any{"gateway": nil, "bridge": nil}, "candidate_scopes": []string{"lan", "wan", "internal", "external"}, "capability": defaultDatapathCapability()})
+		item := map[string]any{"id": name, "name": name, "admin_state": adminState, "link_state": linkState, "speed": localInterfaceSpeed(path), "mtu": mtu, "mac": localInterfaceMAC(name), "addresses": localInterfaceAddresses(name), "work_mode": "kernel_stack", "active_path": "kernel_stack", "mode_role": map[string]any{"gateway": nil, "bridge": nil}, "candidate_scopes": []string{"lan", "wan", "internal", "external"}, "capability": defaultDatapathCapability()}
+		if label != "" {
+			item["port_label"] = label
+		}
+		items = append(items, item)
 	}
 	return items
 }

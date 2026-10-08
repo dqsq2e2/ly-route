@@ -182,7 +182,8 @@ if ! grep -q 'listen 80' "$repo_root/packaging/nginx/ly-route-admin.conf"; then
   exit 1
 fi
 
-if ! grep -q 'proxy_pass http://127.0.0.1:8080/api/v1/' "$repo_root/packaging/nginx/ly-route-admin.conf"; then
+if ! grep -q 'location \^~ /api/ {' "$repo_root/packaging/nginx/ly-route-admin.conf" ||
+   ! grep -q 'proxy_pass http://127.0.0.1:8080/api/;' "$repo_root/packaging/nginx/ly-route-admin.conf"; then
   echo "admin nginx config does not proxy the local control API" >&2
   exit 1
 fi

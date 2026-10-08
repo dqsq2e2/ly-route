@@ -107,7 +107,8 @@ if [ -f "$tmp/etc/nginx/conf.d/ly-route-admin.conf" ]; then
   grep -q 'root /opt/ly-route/admin' "$tmp/etc/nginx/conf.d/ly-route-admin.conf"
   grep -q 'listen 443 ssl default_server' "$tmp/etc/nginx/conf.d/ly-route-admin.conf"
   grep -q 'ssl_certificate /etc/ly-route/tls/admin.crt' "$tmp/etc/nginx/conf.d/ly-route-admin.conf"
-  grep -q 'proxy_pass http://127.0.0.1:8080/api/v1/' "$tmp/etc/nginx/conf.d/ly-route-admin.conf"
+  grep -q 'location \^~ /api/ {' "$tmp/etc/nginx/conf.d/ly-route-admin.conf"
+  grep -q 'proxy_pass http://127.0.0.1:8080/api/;' "$tmp/etc/nginx/conf.d/ly-route-admin.conf"
 fi
 if [ -f "$tmp/opt/ly-route/admin/index.html" ]; then
   grep -q 'Ly Route 出口网关' "$tmp/opt/ly-route/admin/index.html"

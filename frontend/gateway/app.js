@@ -653,13 +653,15 @@ function systemConfigOperationsHtml() {
 
 function renderManagementNetworkEditor() {
 	const item = state.controlPlane.managementNetwork?.item || state.controlPlane.managementNetwork || {};
-	const iface = item.interface_id || 'eth0';
-	const cidr = item.cidr || item.ip_cidr || '192.168.88.1/24';
-	const gateway = item.gateway || '';
 	const interfaceRows = networkRowsForPage('monitor/interface_list');
-	const options = interfaceRows.map((row) => row[0]).filter(Boolean);
-	if (iface && !options.includes(iface)) options.unshift(iface);
-	const interfaceOptions = options.map((value) => `<option value="${escapeAttr(value)}" ${value === iface ? 'selected' : ''}>${safeText(value)}</option>`).join('');
+	const managementRow = interfaceRows.find((row) => row[3] === '管理口');
+	const iface = item.interface_id || managementRow?._systemId || managementRow?.[0] || 'eth0';
+	const cidr = item.cidr || item.ip_cidr || '192.168.88.254/24';
+	const gateway = item.gateway || '';
+	const options = interfaceRows.filter((row) => row[0] && row._resourceKey !== 'interfaceBonds')
+		.map((row) => ({ value: row._systemId || row[0], label: row[0] }));
+	if (iface && !options.some((option) => option.value === iface || option.label === iface)) options.unshift({ value: iface, label: iface });
+	const interfaceOptions = options.map(({ value, label }) => `<option value="${escapeAttr(value)}" ${value === iface || label === iface ? 'selected' : ''}>${safeText(label)}</option>`).join('');
 	return `<section class="config-op management-network-op"><div class="config-op-copy"><strong>管理口设置</strong></div><div class="management-network-form"><label>管理接口<select data-management-interface>${interfaceOptions}</select></label><label>IP/掩码<input data-management-cidr value="${safeText(cidr)}"></label><label>网关<input data-management-gateway value="${safeText(gateway)}"></label><button class="primary" type="button" data-action="management-save">保存管理口</button></div></section>`;
 }
 
@@ -1115,8 +1117,8 @@ function mapInterfaceRow(item) {
   const displayName = item.id || item.name || item.system_name || '';
   return [
     displayName,
-    item.link_state === 'down' || item.admin_state === 'down' ? 'LINKDOWN' : 'LINKUP',
-    displayWorkMode(workMode),
+    ['down', 'lowerlayerdown', 'notpresent', 'dormant'].includes(String(item.link_state).toLowerCase()) || item.admin_state === 'down' ? 'LINKDOWN' : 'LINKUP',
+    displayWorkMode(workMode, role),
     direction,
     bondName || '',
     displayValue(item.rx_bps, item.stats?.rx_bps),
@@ -1129,7 +1131,6 @@ function interfaceWorkModeForItem(item) {
   const ids = new Set([item.id, item.name, item.interface_id, item.system_name].filter(Boolean).map(String));
   const bond = envelopeItems(state.controlPlane.resources?.interfaceBonds).find((entry) => stringList(entry.members).some((member) => ids.has(member)));
   if (bond?.work_mode) return bond.work_mode;
-  if (item.vpp_interface && (item.work_mode === 'kernel_stack' || item.active_path === 'kernel_stack')) return 'af_xdp';
   return item.work_mode || item.active_path || '';
 }
 function interfaceBondNameForItem(item) {
@@ -1147,16 +1148,16 @@ function stringList(value) {
 function displayBondName(item) {
   return String(item.name || item.id || '未命名聚合组');
 }
-function displayWorkMode(value) {
+function displayWorkMode(value, role = '') {
   const text = String(value || '').trim().toLowerCase();
   if (!text) return '未识别';
-  if (text === 'kernel_stack') return '内核管理通道';
-  if (text === 'af_xdp') return 'XDP快速路径';
-  if (text === 'xdp') return 'XDP快速路径';
-  if (text === 'vpp') return 'VPP高速转发';
-  if (text === 'vpp_native') return 'VPP高速转发';
+  if (text === 'kernel_stack') return role === 'management' ? 'Linux管理口' : '未接入VPP';
+  if (text === 'af_xdp') return 'AF_XDP已接入';
+  if (text === 'xdp') return 'XDP已接入';
+  if (text === 'vpp') return 'VPP已接入';
+  if (text === 'vpp_native') return 'VPP已接入';
   if (text === 'linux') return 'Linux普通转发';
-  if (text === 'dpdk') return 'DPDK高速转发';
+  if (text === 'dpdk') return 'DPDK已接入';
   if (text === 'bridge') return '桥接转发';
   return value;
 }
@@ -1707,7 +1708,9 @@ async function submitResourceModal(page, action = 'add', rowIndex = null) {
       recordLocalLineEvent(`${resourceEndpoints[side.resourceKey]}/${side.payload.id || ''}`, 'create');
     }
     const mutation = await apiJSON(endpoint, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    updateLocalResource(resourceKey, mutation.item || mutation);
+    const roleOnly = resourceKey === 'interfaces' && payload.role_configured === true;
+    if (roleOnly) await confirmResourceReadback(resourceKey, mutation.item || mutation, payload, endpointID);
+    else updateLocalResource(resourceKey, mutation.item || mutation);
     if (objectGroupImport?.file && (resourceKey === 'objectGroups' || isObjectGroupPage(page))) {
       const importEndpointID = payload.id || endpointID || mutation.item?.id;
       if (!importEndpointID) throw new Error('对象组导入缺少目标组 ID');
@@ -1751,8 +1754,8 @@ async function submitResourceModal(page, action = 'add', rowIndex = null) {
     recordLocalLineEvent(`${resourceEndpoints[resourceKey]}/${payload.id || endpointID || ''}`, method === 'PATCH' ? 'update' : 'create');
     closeModal(true);
     renderWorkspace();
-    toast(`${page.title} 已保存`);
-    queueRuntimeApply();
+    toast(roleOnly ? '接口角色已保存' : `${page.title} 已保存`);
+    if (!roleOnly) queueRuntimeApply();
     void refreshControlPlane({ resourcesOnly: true });
   } catch (error) {
     toast(friendlyMutationError(error, `${page.title} 保存失败`));
@@ -1771,7 +1774,7 @@ async function confirmResourceReadback(resourceKey, mutationItem, payload, endpo
   // configuration here; runtime convergence is checked by runtime status.
   const expected = payload;
   const identity = expected.id || payload.id || endpointID || expected.name || payload.name || '';
-  const item = envelopeItems(readback).find((candidate) => [candidate.id, candidate.name, candidate.username].filter(Boolean).map(String).includes(String(identity)));
+  const item = envelopeItems(readback).find((candidate) => [candidate.id, candidate.name, candidate.username, candidate.system_name, candidate.interface_id].filter(Boolean).map(String).includes(String(identity)));
   if (resourceKey === 'interfaces' && payload.role_configured === true) {
     const expectedRole = normalizeInterfaceRole(payload.gateway_role || payload.mode_role?.gateway || '');
     const actualRole = normalizeInterfaceRole(item?.gateway_role || item?.mode_role?.gateway || '');
@@ -2437,10 +2440,12 @@ function interfaceBondPayload() {
 }
 function workModeValueFromDisplay(value) {
   const text = String(value || '').trim();
-  if (text === 'XDP快速路径') return 'af_xdp';
-  if (text === 'VPP高速转发') return 'vpp';
+  if (text === 'XDP快速路径' || text === 'AF_XDP已接入') return 'af_xdp';
+  if (text === 'XDP已接入') return 'xdp';
+  if (text === 'VPP高速转发' || text === 'VPP已接入') return 'vpp';
+  if (text === 'DPDK已接入') return 'dpdk';
   if (text === 'Linux普通转发') return 'linux';
-  if (text === '内核管理通道') return 'kernel_stack';
+  if (['内核管理通道', 'Linux管理口', '未接入VPP'].includes(text)) return 'kernel_stack';
   return text || 'vpp';
 }
 function normalizeInterfaceRole(value) {

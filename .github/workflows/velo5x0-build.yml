@@ -10,6 +10,7 @@ on:
       - 'frontend/gateway/**'
       - 'runtime/**'
       - 'packaging/rootfs-overlay/**'
+      - 'packaging/nginx/**'
       - 'packaging/runtime-boundaries/**'
       - 'packaging/hardware/velo5x0/**'
   workflow_dispatch:
@@ -77,6 +78,10 @@ jobs:
           sudo apt-get install -y /tmp/live-build.deb
           bash scripts/dev-hotfix-check.sh ./cmd/... ./internal/httpapi
           (cd backend && go test ./internal/httpapi -run '^TestFan')
+          (cd backend && go test ./internal/httpapi -run '^TestVelo5x0')
+          (cd backend && go test ./internal/httpapi -run '^TestSystemCPU')
+          (cd backend && go test ./internal/httpapi -run '^TestInterfaceRolePatch')
+          node scripts/test-gateway-formatters.mjs
           python3 scripts/test-velo5x0-hardware.py
           python3 scripts/test-hotfix-serial.py
           bash scripts/test-velo5x0-installer.sh
