@@ -11,6 +11,9 @@ Usage:
     --host root@gateway --remote /usr/lib/ly-route/ly-route-control \
     --service ly-route-control-api
 
+Use --serial-port COM10 instead of --host when only a logged-in root serial
+console is available. This transport also verifies the remote artifact hash.
+
 The artifact path is derived from the manifest. Deployment is rejected when
 the current source fingerprint or artifact SHA-256 differs from that manifest.
 USAGE
@@ -18,12 +21,14 @@ USAGE
 
 manifest=
 host=
+serial_port=
 remote_file=
 service=
 while (($#)); do
   case "$1" in
     --manifest) manifest=${2:?missing value for --manifest}; shift 2 ;;
     --host) host=${2:?missing value for --host}; shift 2 ;;
+    --serial-port) serial_port=${2:?missing value for --serial-port}; shift 2 ;;
     --remote) remote_file=${2:?missing value for --remote}; shift 2 ;;
     --service) service=${2:?missing value for --service}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -31,13 +36,18 @@ while (($#)); do
   esac
 done
 
-for value in manifest host remote_file service; do
+for value in manifest remote_file service; do
   if [[ -z ${!value} ]]; then
     printf '%s is required\n' "$value" >&2
     usage >&2
     exit 2
   fi
 done
+
+if [[ -z $host && -z $serial_port ]] || [[ -n $host && -n $serial_port ]]; then
+  printf '%s\n' 'specify exactly one of --host or --serial-port' >&2
+  exit 2
+fi
 
 [[ -f $manifest ]] || { printf 'manifest not found: %s\n' "$manifest" >&2; exit 2; }
 
@@ -72,6 +82,14 @@ local_sha=$(sha256sum "$local_file" | awk '{print $1}')
 if [[ $local_sha != "$expected_sha" ]]; then
   printf '%s\n' 'refusing hotfix: artifact SHA-256 does not match manifest' >&2
   exit 3
+fi
+
+if [[ -n $serial_port ]]; then
+  MSYS2_ARG_CONV_EXCL="$remote_file" "${LY_HOTFIX_PYTHON:-python3}" "$repo_root/scripts/hotfix-serial.py" \
+    --port "$serial_port" --artifact "$local_file" --manifest "$manifest" \
+    --sha256 "$local_sha" --remote "$remote_file" --service "$service"
+  printf 'source_fingerprint=%s\n' "$expected_fingerprint"
+  exit 0
 fi
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)

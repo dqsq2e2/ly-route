@@ -206,10 +206,13 @@ list_nics() {
     [ "$(cat "$path/type")" = 1 ] || continue
     [ ! -d "$path/wireless" ] || continue
     [ -e "$path/device" ] || continue
+    device=$(readlink -f "$path/device" 2>/dev/null || true)
+    pci=$(basename "$device")
     if [ -r /etc/ly-route/hardware ] &&
        [ "$(cat /etc/ly-route/hardware)" = velo5x0 ]; then
       # DSA conduits are not physical jacks and cannot be installer choices.
       case "$name" in lan[1-8]) ;; *)
+        case "$pci" in 0000:00:14.0|0000:00:14.1) continue ;; esac
         [ ! -e "$path/dsa" ] || continue
         [ ! -e "$path/upper_lan1" ] && [ ! -e "$path/upper_lan5" ] || continue
         ;;
@@ -217,8 +220,6 @@ list_nics() {
     fi
     mac=$(cat "$path/address" 2>/dev/null || true)
     state=$(cat "$path/operstate" 2>/dev/null || printf unknown)
-    device=$(readlink -f "$path/device" 2>/dev/null || true)
-    pci=$(basename "$device")
     case "$pci" in ????\:??\:??.?) ;; *) pci=unknown ;; esac
     driver=none
     [ -e "$device/driver" ] && driver=$(basename "$(readlink -f "$device/driver")")
@@ -537,6 +538,12 @@ WantedBy=multi-user.target
 EOF
 if [ "$hardware" = velo5x0 ]; then
   install_velo5x0_overlay "$work/config/includes.chroot"
+  mkdir -p "$work/config/includes.chroot/etc/systemd/system/ly-route-auto-install.service.d"
+  cat > "$work/config/includes.chroot/etc/systemd/system/ly-route-auto-install.service.d/velo5x0.conf" <<'EOF'
+[Unit]
+Requires=ly-route-velo5x0-board.service
+After=ly-route-velo5x0-board.service
+EOF
   mkdir -p "$work/config/packages.chroot"
   cp "$kernel_deb" "$work/config/packages.chroot/"
   # ttyS1 is the actual 5x0 console, including installer prompts and input.

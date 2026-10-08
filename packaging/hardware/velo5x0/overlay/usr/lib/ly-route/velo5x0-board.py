@@ -11,6 +11,7 @@ import signal
 import subprocess
 import tempfile
 import time
+from contextlib import closing
 from pathlib import Path
 
 from smbus import SMBus
@@ -81,7 +82,7 @@ def initialize():
     load("mdio_gpio")
     load("vc_edge5x0_mdio")
     load("i2c_dev")
-    with SMBus(9) as bus:
+    with closing(SMBus(9)) as bus:
         fan_setup(bus)
         bound = Path("/sys/bus/pci/drivers/igb")
         if not all((bound / f"0000:00:14.{index}").exists() for index in (2, 3)):
@@ -304,7 +305,7 @@ def fan():
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    with SMBus(9) as bus:
+    with closing(SMBus(9)) as bus:
         fan_setup(bus)
         powered = True
         config = DEFAULT_CONFIG

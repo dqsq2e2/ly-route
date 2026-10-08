@@ -23,12 +23,10 @@ class Bus:
     def __init__(self, registers):
         self.registers = dict(registers)
         self.writes = []
+        self.closed = False
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return False
+    def close(self):
+        self.closed = True
 
     def read_byte_data(self, address, register):
         return self.registers[(address, register)]
@@ -39,6 +37,31 @@ class Bus:
 
 
 class HardwareTests(unittest.TestCase):
+    def test_initialize_closes_debian_smbus_without_context_manager(self):
+        bus = Bus({(0x2F, 0xFD): 0xFF})
+        with patch.object(board, "load"), patch.object(board, "SMBus", return_value=bus):
+            with self.assertRaisesRegex(RuntimeError, "EMC2104"):
+                board.initialize()
+        self.assertTrue(bus.closed)
+
+    def test_initialize_closes_bus_before_loading_network_drivers(self):
+        bus = Bus({})
+        paths = MagicMock()
+        paths.exists.return_value = True
+        paths.__truediv__.return_value.exists.return_value = True
+
+        def load(name, *_options):
+            if name == "igb":
+                self.assertTrue(bus.closed)
+
+        with patch.object(board, "load", side_effect=load), \
+                patch.object(board, "SMBus", return_value=bus), \
+                patch.object(board, "fan_setup"), \
+                patch.object(board, "Path", return_value=paths), \
+                patch.object(board.glob, "glob", return_value=[]):
+            board.initialize()
+        self.assertTrue(bus.closed)
+
     def test_pwm_passthrough_preserves_poe(self):
         bus = Bus({(0x1C, 1): 0xA5, (0x1C, 3): 0xFF})
         board.straps(bus, True)
@@ -202,6 +225,7 @@ class HardwareTests(unittest.TestCase):
         self.assertIn("selected temperature source is unavailable: wifi", statuses[0][-1])
         self.assertEqual(bus.registers[(0x1C, 1)], 0x65)
         self.assertEqual(bus.registers[(0x2F, 0x40)], 255)
+        self.assertTrue(bus.closed)
 
     def test_installer_has_both_serial_boot_and_prompt_configuration(self):
         source = (ROOT / "scripts/build-auto-install-iso.sh").read_text(encoding="utf-8")
@@ -213,6 +237,8 @@ class HardwareTests(unittest.TestCase):
         self.assertNotIn('--linux-packages none', source)
         self.assertIn('dpkg-deb -f "$kernel_deb" Package', source)
         self.assertNotIn('blkid -o device -t LABEL=LYROUTE_ROOT', source)
+        self.assertIn('0000:00:14.0|0000:00:14.1) continue', source)
+        self.assertIn('Requires=ly-route-velo5x0-board.service', source)
 
     def test_firstboot_distinguishes_dsa_jacks_with_shared_macs(self):
         source = (ROOT / "packaging/rootfs-overlay/usr/lib/ly-route/firstboot.sh").read_text(encoding="utf-8")
