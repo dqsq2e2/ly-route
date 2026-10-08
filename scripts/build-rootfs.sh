@@ -313,7 +313,8 @@ EOF
       "$target/etc/systemd/system/ly-route-pppoe@.service" \
       "$target/etc/systemd/system/ly-route-policy-routing.service"
     rm -rf "$target/etc/systemd/system/kea-dhcp4-server.service.d"
-    sed -i '/kea-dhcp4-server\.service/d; s/ with DHCP enabled//' "$target/usr/lib/ly-route/firstboot.sh"
+    rm -f "$target/etc/systemd/system/kea-dhcp4-management-server.service"
+    sed -i '/kea-dhcp4.*server\.service/d; s/ with DHCP enabled//' "$target/usr/lib/ly-route/firstboot.sh"
   fi
 }
 
@@ -342,6 +343,7 @@ enable_units() {
   if [ "$product" = gateway ]; then
     ln -sf /etc/systemd/system/ly-route-pppoe.target "$wants/ly-route-pppoe.target"
     ln -sf /lib/systemd/system/kea-dhcp4-server.service "$wants/kea-dhcp4-server.service"
+    ln -sf /etc/systemd/system/kea-dhcp4-management-server.service "$wants/kea-dhcp4-management-server.service"
     [ ! -f "$target/lib/systemd/system/smartdns.service" ] || ln -sf /lib/systemd/system/smartdns.service "$wants/smartdns.service"
     [ ! -f "$target/lib/systemd/system/ly-route-dns-vpp-proxy.service" ] || ln -sf /lib/systemd/system/ly-route-dns-vpp-proxy.service "$wants/ly-route-dns-vpp-proxy.service"
     [ ! -f "$target/lib/systemd/system/ly-route-dns-vpp-proxy-v6.service" ] || ln -sf /lib/systemd/system/ly-route-dns-vpp-proxy-v6.service "$wants/ly-route-dns-vpp-proxy-v6.service"

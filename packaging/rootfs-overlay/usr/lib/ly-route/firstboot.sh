@@ -138,32 +138,15 @@ if [ -n "${lan_if:-}" ] && [ "$LY_ROUTE_MANAGEMENT_FALLBACK" = "yes" ]; then
      [ "$(cat /etc/ly-route/hardware)" = velo5x0 ]; then
     case "$lan_if" in lan[1-8]) management_name_match="Name=$lan_if" ;; esac
   fi
-  if [ -n "${installed_management_mac:-}" ]; then
-    cat > "$management_network" <<EOF
-[Match]
-MACAddress=$installed_management_mac
-$management_name_match
-
-[Network]
-Address=$LY_ROUTE_MANAGEMENT_FALLBACK_CIDR
-DHCP=no
-LinkLocalAddressing=ipv4
-IPv6AcceptRA=yes
-Gateway=$LY_ROUTE_MANAGEMENT_FALLBACK_GATEWAY
-EOF
-  else
-    cat > "$management_network" <<EOF
-[Match]
-Name=$lan_if
-
-[Network]
-Address=$LY_ROUTE_MANAGEMENT_FALLBACK_CIDR
-DHCP=no
-LinkLocalAddressing=ipv4
-IPv6AcceptRA=yes
-Gateway=$LY_ROUTE_MANAGEMENT_FALLBACK_GATEWAY
-EOF
-  fi
+  management_dhcp=
+  [ ! -f /etc/kea/kea-dhcp4.conf ] || management_dhcp=/etc/kea/kea-dhcp4-management.conf
+  python3 /usr/lib/ly-route/management-network.py \
+    --interface "$lan_if" --cidr "$LY_ROUTE_MANAGEMENT_FALLBACK_CIDR" \
+    --gateway "$LY_ROUTE_MANAGEMENT_FALLBACK_GATEWAY" \
+    --mac "${installed_management_mac:-}" --name-match "$management_name_match" \
+    --network-file "$management_network" \
+    --dhcp-file "$management_dhcp" \
+    --business-file /etc/kea/kea-dhcp4.conf
   rm -f /run/systemd/network/05-ly-route-lan.network
   ip link set "$lan_if" up 2>/dev/null || true
   if ! ip -o -4 addr show dev "$lan_if" | grep -Fq " $LY_ROUTE_MANAGEMENT_FALLBACK_CIDR "; then
@@ -183,63 +166,6 @@ EOF
   if [ "${LY_ROUTE_VMXNET3_TAP_BRIDGE_ACCEPTANCE:-false}" = true ] &&
      [ "$(basename "$(readlink -f "/sys/class/net/$lan_if/device/driver" 2>/dev/null || true)")" = vmxnet3 ]; then
     ip link set dev "$lan_if" promisc on 2>/dev/null || true
-  fi
-  if [ -f /etc/kea/kea-dhcp4.conf ]; then
-    # Render the DHCP subnet from the installed management CIDR. A plain
-    # string replacement is unsafe here: replacing 192.168.88.1 inside the
-    # default pool also turns 192.168.88.100 into 10.1.18.12500. Keep the
-    # management address out of the dynamic pool as well.
-    python3 - "$lan_if" "$management_ip" "$LY_ROUTE_MANAGEMENT_FALLBACK_CIDR" /etc/kea/kea-dhcp4.conf <<'PY'
-import ipaddress
-import json
-import sys
-
-interface, router_text, cidr, target = sys.argv[1:]
-router = ipaddress.ip_address(router_text)
-network = ipaddress.ip_interface(cidr).network
-network_int = int(network.network_address)
-first_host = network_int + 1
-last_host = int(network.broadcast_address) - 1
-
-# Keep the factory pool in .100-.199 for ordinary /24 LANs. For smaller
-# networks use the first usable range, always excluding the router address.
-host_count = max(0, last_host - first_host + 1)
-if host_count >= 220:
-    pool_first = network_int + 100
-    pool_last = min(network_int + 199, last_host)
-else:
-    pool_first = first_host
-    pool_last = min(network_int + 199, last_host)
-
-pools = []
-if pool_first <= pool_last:
-    router_int = int(router)
-    if pool_first <= router_int <= pool_last:
-        if pool_first <= router_int - 1:
-            pools.append({"pool": f"{ipaddress.ip_address(pool_first)} - {ipaddress.ip_address(router_int - 1)}"})
-        if router_int + 1 <= pool_last:
-            pools.append({"pool": f"{ipaddress.ip_address(router_int + 1)} - {ipaddress.ip_address(pool_last)}"})
-    else:
-        pools.append({"pool": f"{ipaddress.ip_address(pool_first)} - {ipaddress.ip_address(pool_last)}"})
-
-document = {
-    "Dhcp4": {
-        "interfaces-config": {"interfaces": [interface]},
-        "subnet4": [{
-            "id": 1,
-            "subnet": network.with_prefixlen,
-            "pools": pools,
-            "option-data": [
-                {"name": "routers", "data": str(router)},
-                {"name": "domain-name-servers", "data": str(router)},
-            ],
-        }],
-    }
-}
-with open(target, "w", encoding="utf-8") as output:
-    json.dump(document, output, indent=2)
-    output.write("\n")
-PY
   fi
   control_env=/etc/ly-route/control-api.env
   mkdir -p /etc/ly-route
@@ -261,6 +187,9 @@ PY
     mv -f "$runtime_env_tmp" "$runtime_env"
   fi
   systemctl reset-failed kea-dhcp4-server.service 2>/dev/null || true
+  systemctl enable kea-dhcp4-management-server.service >/dev/null 2>&1 || true
+  systemctl reset-failed kea-dhcp4-management-server.service 2>/dev/null || true
+  systemctl restart --no-block kea-dhcp4-management-server.service
   # Kea may wait for network-online.target, while firstboot is ordered before
   # that target. Do not hold the complete dataplane boot transaction here.
   systemctl restart --no-block kea-dhcp4-server.service 2>/dev/null || true
