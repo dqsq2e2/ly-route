@@ -12,6 +12,7 @@ on:
       - 'packaging/rootfs-overlay/**'
       - 'packaging/nginx/**'
       - 'packaging/runtime-boundaries/**'
+      - 'packaging/vpp-patches/**'
       - 'packaging/hardware/velo5x0/**'
   workflow_dispatch:
 
@@ -82,10 +83,14 @@ jobs:
           (cd backend && go test ./internal/httpapi -run '^TestSystemCPU')
           (cd backend && go test ./internal/httpapi -run '^TestInterfaceRolePatch')
           (cd backend && go test ./internal/httpapi -run '^TestWiFi')
+          (cd backend && go test ./gateway ./internal/httpapi -run '^TestWANLinkRuntime|^TestRuntimeDataInterfaces')
           (cd backend && go test ./internal/runtime/vpp -run '^TestVerifySupplementalOperation')
           node scripts/test-gateway-formatters.mjs
+          node scripts/test-wan-runtime-ui.mjs
           python3 scripts/test-velo5x0-hardware.py
           python3 scripts/test-wifi-runtime.py
+          python3 scripts/test-vpp-apply-af-xdp.py
+          bash scripts/test-vpp-native-selection.sh
           python3 scripts/test-hotfix-serial.py
           bash scripts/test-velo5x0-installer.sh
           bash packaging/hardware/velo5x0/glue/tests/check.sh

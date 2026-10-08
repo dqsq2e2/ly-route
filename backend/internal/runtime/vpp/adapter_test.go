@@ -180,6 +180,23 @@ func TestAFPacketAttachmentRestoresProbedMACAddress(t *testing.T) {
 	}
 }
 
+func TestAFXDPAttachmentRestoresPhysicalMACBeforeAdminUp(t *testing.T) {
+	operation := DataplaneAttachOperation("req-afxdp", NativeAttachment{
+		LinuxInterface: "enp4s0f0",
+		VPPInterface:   "lyroute-enp4s0f0",
+		MACAddress:     "f0:8e:db:08:56:10",
+		Hook:           NativeHookAFXDP,
+		Mode:           NativeModeZeroCopy,
+	})
+	commands := operation.VPPCtlCommands
+	if len(commands) < 3 ||
+		!strings.Contains(commands[0], "num-rx-queues all zero-copy") ||
+		commands[1] != "set interface mac address lyroute-enp4s0f0 f0:8e:db:08:56:10" ||
+		commands[2] != "set interface state lyroute-enp4s0f0 up" {
+		t.Fatalf("AF_XDP must preserve NIC identity before DHCP can transmit: %v", commands)
+	}
+}
+
 func TestLANControlPlaneHostInterfaceIsStableAndLinuxSafe(t *testing.T) {
 	for _, test := range []struct{ input, want string }{
 		{input: "ens192", want: "lylan-ens192"},

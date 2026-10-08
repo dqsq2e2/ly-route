@@ -1,0 +1,80 @@
+diff --git a/src/plugins/af_xdp/af_xdp.h b/src/plugins/af_xdp/af_xdp.h
+--- a/src/plugins/af_xdp/af_xdp.h
++++ b/src/plugins/af_xdp/af_xdp.h
+@@ -67,6 +67,9 @@
+   struct xsk_ring_cons rx;
+   struct xsk_ring_prod fq;
+   int xsk_fd;
++  /* Includes fill-ring, NIC-owned and not-yet-dequeued RX buffers. */
++  uword *owned_buffers;
++  u32 owned_count;
+ 
+   /* fields below are accessed in control-plane only (cold) */
+ 
+diff --git a/src/plugins/af_xdp/input.c b/src/plugins/af_xdp/input.c
+--- a/src/plugins/af_xdp/input.c
++++ b/src/plugins/af_xdp/input.c
+@@ -121,6 +121,11 @@
+   n_alloc = clib_min (n_alloc, ARRAY_LEN (bis));
+   n_alloc = vlib_buffer_alloc_from_pool (vm, bis, n_alloc, ad->pool);
+   n = xsk_ring_prod__reserve (&rxq->fq, n_alloc, &idx);
++  for (u32 i = 0; i < n_alloc; i++)
++    clib_bitmap_set_no_check (rxq->owned_buffers, bis[i], 1);
++  rxq->owned_count += n_alloc;
++  /* Ownership ends only on RX dequeue, not when the kernel consumes FQ. */
++
+   ASSERT (n == n_alloc);
+ 
+   fill = xsk_ring_prod__fill_addr (&rxq->fq, idx);
+@@ -207,6 +212,8 @@
+       const struct xdp_desc *desc = xsk_ring_cons__rx_desc (&rxq->rx, idx);
+       const u64 addr = desc->addr;
+       bi[0] = addr2bi (xsk_umem__extract_addr (addr));
++      clib_bitmap_set_no_check (rxq->owned_buffers, bi[0], 0);
++      rxq->owned_count--;
+       ASSERT (vlib_buffer_is_known (vm, bi[0]) ==
+ 	      VLIB_BUFFER_KNOWN_ALLOCATED);
+       off[0] = xsk_umem__extract_offset (addr) - sizeof (vlib_buffer_t);
+diff --git a/src/plugins/af_xdp/device.c b/src/plugins/af_xdp/device.c
+--- a/src/plugins/af_xdp/device.c
++++ b/src/plugins/af_xdp/device.c
+@@ -180,5 +180,25 @@
+   vec_foreach (umem, ad->umem)
+     xsk_umem__delete (*umem);
+ 
++  /* Sockets/UMEMs are now quiescent. Reading FQ alone misses buffers already
++   * consumed into NIC descriptors; return every outstanding RX allocation. */
++  for (i = 0; i < ad->rxq_num; i++)
++    {
++      af_xdp_rxq_t *rxq = vec_elt_at_index (ad->rxqs, i);
++      uword bi;
++      u32 buffers[VLIB_FRAME_SIZE], count = 0;
++      clib_bitmap_foreach (bi, rxq->owned_buffers)
++        {
++          buffers[count++] = bi;
++          if (count == VLIB_FRAME_SIZE)
++            {
++              vlib_buffer_free (vm, buffers, count);
++              count = 0;
++            }
++        }
++      vlib_buffer_free (vm, buffers, count);
++      clib_bitmap_free (rxq->owned_buffers);
++    }
++
+   for (i = 0; i < ad->rxq_num; i++)
+     clib_file_del_by_index (&file_main, vec_elt (ad->rxqs, i).file_index);
+@@ -361,6 +381,13 @@
+ 
+   rxq->xsk_fd = is_rx ? fd : -1;
+ 
++  if (is_rx)
++    {
++      uword max_index = vm->buffer_main->buffer_mem_size >>
++                        CLIB_LOG2_CACHE_LINE_BYTES;
++      clib_bitmap_alloc (rxq->owned_buffers, max_index);
++    }
++
+   if (is_tx)
+     {
+       txq->xsk_fd = fd;

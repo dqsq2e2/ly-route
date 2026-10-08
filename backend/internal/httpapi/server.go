@@ -161,6 +161,7 @@ type Server struct {
 	orchestratorReconcileInterval time.Duration
 	orchestratorTelemetry         OrchestratorTelemetryCollector
 	interfaceTelemetry            InterfaceTelemetryCollector
+	wanLinkRuntime                WANLinkRuntimeObserver
 	dhcpLeases                    DHCPLeaseCollector
 	vppCounters                   VPPCounterCollector
 	policyHits                    PolicyHitCollector
@@ -2572,6 +2573,9 @@ func (server *Server) handleDesiredCollection(resourceType string) http.HandlerF
 			if resourceType == "wan_group" {
 				items = server.decorateWANGroupRuntimeStates(r.Context(), items)
 			}
+			if resourceType == "wan_link" {
+				items = server.decorateWANLinkRuntimeStates(r.Context(), items)
+			}
 			if resourceType == "object_group" && server.profile.ID() == product.Orchestrator().ID() {
 				filtered := make([]map[string]any, 0, len(items))
 				for _, item := range items {
@@ -2661,6 +2665,9 @@ func (server *Server) handleDesiredItem(resourceType string) http.HandlerFunc {
 			}
 			if resourceType == "wan_group" {
 				item = server.decorateWANGroupRuntimeStates(r.Context(), []map[string]any{item})[0]
+			}
+			if resourceType == "wan_link" {
+				item = server.decorateWANLinkRuntimeStates(r.Context(), []map[string]any{item})[0]
 			}
 			if resourceType == "port_map" {
 				item = server.decoratePortMapRuntimeStates(r.Context(), []map[string]any{item})[0]
@@ -3561,6 +3568,11 @@ func (server *Server) runtimeDataInterfaces(ctx context.Context) []string {
 		}
 		for _, item := range items {
 			if truthy(item["deleted"]) {
+				continue
+			}
+			if resourceType == "interface" && truthy(item["role_configured"]) && firstStringField(item, "cidr", "ip_cidr", "ip", "address") == "" && len(stringSliceField(item, "bridge_members")) == 0 {
+				// A role label alone does not request a forwarding attachment.
+				// WAN links and addressed/bridged LANs activate it separately.
 				continue
 			}
 			role := strings.ToLower(strings.TrimSpace(nonEmpty(stringField(item, "gateway_role"), stringField(item, "role"))))

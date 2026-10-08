@@ -32,7 +32,7 @@ eval "$(awk '
 ' "$builder")"
 module_root=$work/modules
 mkdir -p "$module_root/kernel/net/dsa"
-for module in igb mdio-gpio mv88e6xxx vc-edge5x0-mdio vc-edge5x0-dsa; do
+for module in igb mdio-gpio mv88e6xxx vc-edge5x0-mdio vc-edge5x0-dsa tun vhost_net vhost vhost_iotlb; do
   touch "$module_root/$module.ko"
 done
 tagger=$module_root/kernel/net/dsa/tag_dsa.ko
@@ -50,27 +50,30 @@ expect_module_failure 'tag_dsa module lacks edsa support'
 "${CC:-gcc}" -DTEST_OMIT_DSA -c "$tests_dir/tagger-module.c" -o "$tagger"
 expect_module_failure 'tag_dsa module lacks dsa support'
 "${CC:-gcc}" -c "$tests_dir/tagger-module.c" -o "$tagger"
+rm "$module_root/vhost_net.ko"
+expect_module_failure 'required module absent from package: vhost_net'
+touch "$module_root/vhost_net.ko"
 rm "$module_root/igb.ko"
 expect_module_failure 'required module absent from package: igb'
 printf 'Package checks: combined DSA/EDSA module accepted; missing protocols/modules rejected.\n'
 
 # Exercise the actual generated maintainer template with a private fake boot root.
 eval "$(awk '/^emit_maint_script\(\) \{/ {copy=1} copy {print} copy && /^}/ {exit}' "$builder")"
-kernel_release=6.18.54-velo5x0
+kernel_release=6.18.54-velo5x0-r2
 mkdir -p "$work/root/boot" "$work/root/etc/kernel/postinst.d" "$work/bin"
 emit_maint_script postinst |
   sed "s|/boot/|$work/root/boot/|g; s|/etc/kernel/|$work/root/etc/kernel/|g" >"$work/postinst"
 cat >"$work/bin/depmod" <<'EOF'
 #!/bin/sh
 set -eu
-[ "$*" = "-a 6.18.54-velo5x0" ]
+[ "$*" = "-a 6.18.54-velo5x0-r2" ]
 printf 'depmod\n' >>"$TEST_LOG"
 EOF
 cat >"$work/bin/update-initramfs" <<'EOF'
 #!/bin/sh
 set -eu
 [ "$INITRD" = Yes ]
-[ "$2" = -k ] && [ "$3" = 6.18.54-velo5x0 ]
+[ "$2" = -k ] && [ "$3" = 6.18.54-velo5x0-r2 ]
 printf 'initrd %s\n' "$1" >>"$TEST_LOG"
 printf 'fake initrd\n' >"$TEST_ROOT/boot/initrd.img-$3"
 EOF
@@ -80,10 +83,10 @@ set -eu
 [ "$INITRD" = Yes ]
 [ "$DEB_MAINT_PARAMS" = "configure" ]
 [ "$1" = --exit-on-error ]
-[ "$2" = --arg=6.18.54-velo5x0 ]
-[ "$3" = "--arg=$TEST_ROOT/boot/vmlinuz-6.18.54-velo5x0" ]
+[ "$2" = --arg=6.18.54-velo5x0-r2 ]
+[ "$3" = "--arg=$TEST_ROOT/boot/vmlinuz-6.18.54-velo5x0-r2" ]
 [ "$4" = "$TEST_ROOT/etc/kernel/postinst.d" ]
-[ -s "$TEST_ROOT/boot/initrd.img-6.18.54-velo5x0" ]
+[ -s "$TEST_ROOT/boot/initrd.img-6.18.54-velo5x0-r2" ]
 printf 'hooks\n' >>"$TEST_LOG"
 if [ "${TEST_HOOK_FAIL:-0}" = 1 ]; then exit 9; fi
 EOF

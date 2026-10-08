@@ -17,6 +17,14 @@ cat > "$tmp/bin/systemctl" <<'EOF'
 #!/usr/bin/env sh
 exit 0
 EOF
+cat > "$tmp/bin/ip" <<'EOF'
+#!/usr/bin/env sh
+if [ "${VPPCTL_XDP_MISSING:-0}" = 1 ]; then
+  printf '%s\n' '[{}]'
+else
+  printf '%s\n' '[{"xdp":{"mode":1,"prog":{"id":42}}}]'
+fi
+EOF
 cat > "$tmp/bin/vppctl" <<'EOF'
 #!/usr/bin/env sh
 printf '%s\n' "$*" >> "$VPPCTL_LOG"
@@ -61,7 +69,7 @@ case "$2" in
   *) exit 1 ;;
 esac
 EOF
-chmod 0755 "$tmp/bin/systemctl" "$tmp/bin/vppctl" "$tmp/bin/native-benchmark"
+chmod 0755 "$tmp/bin/systemctl" "$tmp/bin/ip" "$tmp/bin/vppctl" "$tmp/bin/native-benchmark"
 
 run_check() {
   scenario=$1
@@ -79,6 +87,7 @@ run_check() {
     VPPCTL_RDMA_SUCCESS="${VPPCTL_RDMA_SUCCESS:-0}" \
     VPPCTL_DEVICE_ERROR="${VPPCTL_DEVICE_ERROR:-0}" \
     VPPCTL_ACTIVE_AFXDP="${VPPCTL_ACTIVE_AFXDP:-0}" \
+    VPPCTL_XDP_MISSING="${VPPCTL_XDP_MISSING:-0}" \
     LY_ROUTE_VPP_NATIVE_BENCHMARK="$tmp/bin/native-benchmark" \
     LY_ROUTE_RUNTIME_READINESS="$scenario_dir/readiness.json" \
     LY_ROUTE_VPP_CAPABILITY_PROOF="$scenario_dir/proof.json" \
@@ -141,6 +150,13 @@ VPPCTL_ACTIVE_AFXDP=1 run_check active-native-crlf eth0 eth1 af_xdp_plugin.so 0
 grep -q '"dataplane_state": "native_ready"' "$tmp/active-native-crlf/readiness.json"
 if grep -q 'create interface af_xdp' "$tmp/active-native-crlf/vppctl.log"; then
   echo "live AF_XDP readback must not create a competing socket" >&2
+  exit 1
+fi
+
+VPPCTL_ACTIVE_AFXDP=1 VPPCTL_XDP_MISSING=1 run_check active-xdp-detached eth0 eth1 af_xdp_plugin.so 1
+grep -q '"dataplane_state": "dataplane_locked"' "$tmp/active-xdp-detached/readiness.json"
+if grep -q 'create interface af_xdp' "$tmp/active-xdp-detached/vppctl.log"; then
+  echo "detached live attachment must not be damaged by a competing probe" >&2
   exit 1
 fi
 

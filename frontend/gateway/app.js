@@ -212,6 +212,7 @@ function renderWorkspace() {
   const page = currentPage();
   el.appShell.classList.toggle('fan-workspace-active', page.id === 'system/fan');
   el.appShell.classList.toggle('wifi-workspace-active', page.id === 'network/wifi');
+  el.appShell.classList.toggle('lan-wan-workspace-active', page.id === 'network/proxy_main');
   if (page.id === 'system/fan' && gatewayFan.isMounted()) {
     gatewayFan.update();
     return;
@@ -1183,7 +1184,12 @@ function mapProxyInterfaceRow(item) {
   const members = interfaceMembersText(item);
   const hasInterfaceParams = Boolean(displayValue(item.cidr, item.ip_cidr, item.ip, item.address, item.gateway, item.dns, item.dns_servers, item.mtu, item.bandwidth));
   const type = item.kind === 'lan_bridge' || item.type === 'lan_bridge' ? 'LAN桥' : row[3] === 'WAN接口' ? 'WAN线路' : row[3] === 'LAN接口' ? 'LAN接口' : item.role_configured && !hasInterfaceParams ? '' : '';
-  return [row[0], type, displayValue(item.cidr, item.ip_cidr, item.ip, item.address), displayValue(item.gateway), displayValue(item.dns, item.dns_servers), item.nat === false ? '禁用' : '启用', displayValue(item.mtu), displayValue(item.bandwidth), row[5], row[6], displayValue(item.sessions, item.connection_count), members, displayValue(item.description, item.remark, item.notes)];
+  return [row[0], type, displayValue(item.cidr, item.ip_cidr, item.ip, item.address), displayValue(item.gateway), displayValue(item.dns, item.dns_servers), item.nat === false ? '禁用' : '启用', displayValue(item.mtu), displayValue(item.bandwidth), interfaceTrafficTotal(item.rx_bytes), interfaceTrafficTotal(item.tx_bytes), displayValue(item.sessions, item.connection_count, '--'), members, displayValue(item.description, item.remark, item.notes)];
+}
+function interfaceTrafficTotal(value) {
+  if (value === undefined || value === null || value === '') return '--';
+  const bytes = Number(value);
+  return Number.isFinite(bytes) && bytes >= 0 ? gatewayOverview.formatBytes(bytes) : '--';
 }
 function interfaceMembersText(item) {
   const members = item.bridge_members || item.members || [];
@@ -1198,8 +1204,8 @@ function mapWanLinkRow(item) {
   const pppoePeers = Array.isArray(state.controlPlane.pppoeStatus?.peers) ? state.controlPlane.pppoeStatus.peers : (Array.isArray(state.controlPlane.pppoeStatus?.items) ? state.controlPlane.pppoeStatus.items : []);
   const live = pppoePeers.find((candidate) => [candidate.peer_id, candidate.wan_id, candidate.id, candidate.name, candidate.interface, candidate.iface].filter(Boolean).map(String).includes(String(item.id || item.name || item.interface_id || ''))) || {};
   const runtime = wanRuntimeState(item, live);
-  const currentAddress = runtime.up ? runtime.address : runtime.pendingAddress ? '地址未生效' : '';
-  return [item.name || item.interface_id || item.id || '', 'WAN线路', currentAddress, displayValue(item.gateway), displayValue(item.dns, item.dns_servers), item.enabled === false ? '禁用' : '启用', displayValue(item.mtu), displayValue(item.bandwidth), displayValue(item.rx_bps), displayValue(item.tx_bps), displayValue(item.sessions), displayValue(item.description, item.remark, item.notes), wanLineTypeLabel(wanType), runtime.up ? 'UP' : 'DOWN'];
+  const currentAddress = runtime.address || (runtime.pendingAddress ? '地址未生效' : '');
+  return [item.display_name || item.name || item.interface_id || item.id || '', 'WAN线路', currentAddress, displayValue(item.current_gateway, item.gateway), displayValue(item.dns, item.dns_servers), item.enabled === false ? '禁用' : '启用', displayValue(item.mtu), displayValue(item.bandwidth), interfaceTrafficTotal(item.rx_bytes), interfaceTrafficTotal(item.tx_bytes), displayValue(item.sessions, '--'), displayValue(item.description, item.remark, item.notes), wanLineTypeLabel(wanType), runtime.unavailable ? '状态不可用' : runtime.up ? 'UP' : 'DOWN'];
 }
 function mapProxyEgressRow(item) {
 	const underlayID = displayValue(item.underlay_wan_id, item.underlay, '未选择承载出口');
@@ -1220,6 +1226,13 @@ function wanRuntimeState(item, pppoe = {}) {
   if (type === 'pppoe') {
     const up = String(pppoe.state || pppoe.status || '').toLowerCase() === 'connected' && pppoe.route_ready === true;
     return { up, address: up && pppoe.assigned_ipv4 ? `${pppoe.assigned_ipv4}/32` : '' };
+  }
+  if (item.operational_state) {
+    return {
+      up: item.enabled !== false && item.operational_state === 'up',
+      unavailable: item.operational_state === 'unavailable',
+      address: displayValue(item.current_address),
+    };
   }
   const address = displayValue(item.assigned_ipv4, item.lease?.address, item.runtime_address, telemetry.address, item.cidr, item.ip_cidr, item.address);
   const routeReady = item.route_ready === true || item.gateway_reachable === true || item.runtime_state === 'running' || item.runtime_state === 'applied';
@@ -1356,10 +1369,10 @@ function dhcpRows(page) {
 function renderProxyInterfaceTable(page) {
   const rows = proxyInterfaceRows(page);
   const isWanTab = (state.activeTabs[page.id] || 0) === 1;
-  const cols = isWanTab ? ['接口名称', '当前地址', '逻辑状态', 'MTU', '总流入', '总流出', '连接数', '线路类型', '备注'] : ['接口名称', 'IP地址/掩码', 'MTU', '总流入', '总流出', '连接数', '接口成员', '备注'];
+  const cols = isWanTab ? ['接口名称', '当前地址', '线路状态', 'MTU', '总流入', '总流出', '连接数', '线路类型', '备注'] : ['接口名称', 'IP地址/掩码', 'MTU', '总流入', '总流出', '连接数', '接口成员', '备注'];
   const visibleIndexes = isWanTab ? [0, 2, 13, 6, 8, 9, 10, 12, 11] : [0, 2, 6, 8, 9, 10, 11, 12];
-  const rowsHTML = rows.map(({ row, index }) => `<tr><td><input data-row-check="${index}" type="checkbox" ${state.checkedRows.has(index) ? 'checked' : ''}></td>${visibleIndexes.map((colIndex) => `<td>${renderNetworkCell(row[colIndex], page, colIndex)}</td>`).join('')}<td><button class="link-btn" data-row-action="edit" data-row="${index}" type="button">编辑</button><button class="link-btn" data-row-action="delete" data-row="${index}" type="button">删除</button></td></tr>`).join('');
-  return `<table class="data-table"><thead><tr><th><input data-select-all type="checkbox"></th>${cols.map((col) => `<th>${safeText(col)}</th>`).join('')}<th>操作</th></tr></thead><tbody>${renderFixedTableRows(rowsHTML, rows.length, cols.length + 2)}</tbody></table>`;
+  const rowsHTML = rows.map(({ row, index }) => `<tr><td data-label="选择"><input data-row-check="${index}" type="checkbox" ${state.checkedRows.has(index) ? 'checked' : ''}></td>${visibleIndexes.map((colIndex, visibleIndex) => `<td data-label="${escapeAttr(cols[visibleIndex])}">${renderNetworkCell(row[colIndex], page, colIndex)}</td>`).join('')}<td data-label="操作"><button class="link-btn" data-row-action="edit" data-row="${index}" type="button">编辑</button><button class="link-btn" data-row-action="delete" data-row="${index}" type="button">删除</button></td></tr>`).join('');
+  return `<table class="data-table lan-wan-table"><thead><tr><th><input data-select-all type="checkbox"></th>${cols.map((col) => `<th>${safeText(col)}</th>`).join('')}<th>操作</th></tr></thead><tbody>${renderFixedTableRows(rowsHTML, rows.length, cols.length + 2)}</tbody></table>`;
 }
 function proxyInterfaceRows(page) {
   const activeIndex = state.activeTabs[page.id] || 0;

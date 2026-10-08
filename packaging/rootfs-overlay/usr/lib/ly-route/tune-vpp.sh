@@ -232,7 +232,9 @@ EOF
     printf '  workers 0\n'
   fi
   printf '}\n\n'
-  printf 'buffers {\n  buffers-per-numa %s\n}\n\n' "$buffers_per_numa"
+  # AF_XDP also reserves XDP_PACKET_HEADROOM in addition to vlib_buffer_t.
+  # Keep at least 2 KiB of usable RX space after both reservations.
+  printf 'buffers {\n  buffers-per-numa %s\n  default data-size 3072\n}\n\n' "$buffers_per_numa"
   cat <<'EOF'
 plugins {
   # DPDK is enabled by the ownership preflight only when it is the selected

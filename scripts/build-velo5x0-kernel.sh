@@ -28,7 +28,7 @@ require_command() { command -v "$1" >/dev/null 2>&1 || die "required command mis
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 hardware_dir=$repo_root/packaging/hardware/velo5x0
 kernel_version=6.18.54
-kernel_release=$kernel_version-velo5x0
+kernel_release=$kernel_version-velo5x0-r2
 kernel_sha256=9df30b02dd8102bbd0be52556288ef6889ddbe7f1ddb96fbf847d0becf3eacac
 kernel_url=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$kernel_version.tar.xz
 package_name=linux-image-$kernel_release
@@ -100,7 +100,7 @@ EOF
 
 check_packaged_modules() {
   local module_root=$1 module aliases protocol
-  for module in igb mdio-gpio mv88e6xxx tag_dsa vc-edge5x0-mdio vc-edge5x0-dsa; do
+  for module in igb mdio-gpio mv88e6xxx tag_dsa vc-edge5x0-mdio vc-edge5x0-dsa tun vhost_net vhost vhost_iotlb; do
     [ -n "$(find "$module_root" -type f -name "$module.ko" -print -quit)" ] ||
       die "required module absent from package: $module"
   done
@@ -129,7 +129,7 @@ check_fragment() {
   ' "$hardware_dir/kernel.config"
   local setting
   for setting in \
-    CONFIG_X86_64=y CONFIG_MODULES=y 'CONFIG_LOCALVERSION="-velo5x0"' \
+    CONFIG_X86_64=y CONFIG_MODULES=y 'CONFIG_LOCALVERSION="-velo5x0-r2"' \
     CONFIG_IGB=m CONFIG_PHYLIB=m CONFIG_MDIO_BUS=m \
     CONFIG_MDIO_BITBANG=m CONFIG_MDIO_GPIO=m CONFIG_GPIO_ICH=y CONFIG_LPC_ICH=y \
     CONFIG_I2C=y CONFIG_I2C_GPIO=y CONFIG_GPIO_PCA953X=m CONFIG_LEDS_PCA963X=m \
@@ -137,7 +137,8 @@ check_fragment() {
     CONFIG_NET_DSA_TAG_EDSA=m CONFIG_ITCO_WDT=y CONFIG_WATCHDOG_CORE=y \
     CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED=y CONFIG_WATCHDOG_OPEN_TIMEOUT=180 \
     CONFIG_SENSORS_CORETEMP=m CONFIG_ATH10K_PCI=m CONFIG_XDP_SOCKETS=y \
-    CONFIG_VFIO_PCI=m CONFIG_TUN=m CONFIG_PPP=m CONFIG_PPPOE=m CONFIG_NF_TABLES=m \
+    CONFIG_VFIO_PCI=m CONFIG_TUN=m CONFIG_VHOST_NET=m CONFIG_VHOST=m \
+    CONFIG_VHOST_IOTLB=m CONFIG_VHOST_TASK=y CONFIG_PPP=m CONFIG_PPPOE=m CONFIG_NF_TABLES=m \
     CONFIG_USB_XHCI_PCI=y CONFIG_USB_STORAGE=y CONFIG_SATA_AHCI=y \
     CONFIG_MMC_SDHCI_PCI=y CONFIG_EXT4_FS=y CONFIG_SQUASHFS=y CONFIG_OVERLAY_FS=y \
     CONFIG_BLK_DEV_INITRD=y CONFIG_CGROUPS=y CONFIG_SECCOMP_FILTER=y; do

@@ -727,10 +727,15 @@ func DataplaneAttachOperation(requestID string, attachment NativeAttachment) Ope
 	case attachment.Hook == NativeHookAFXDP && attachment.Mode == NativeModeZeroCopy:
 		commands = []string{
 			fmt.Sprintf("?create interface af_xdp host-if %s name %s num-rx-queues all zero-copy", attachment.LinuxInterface, attachment.VPPInterface),
+		}
+		if strings.TrimSpace(attachment.MACAddress) != "" {
+			commands = append(commands, fmt.Sprintf("set interface mac address %s %s", attachment.VPPInterface, attachment.MACAddress))
+		}
+		commands = append(commands,
 			fmt.Sprintf("set interface state %s up", attachment.VPPInterface),
 			fmt.Sprintf("show hardware-interfaces %s", attachment.VPPInterface),
 			fmt.Sprintf("show interface %s", attachment.VPPInterface),
-		}
+		)
 	case attachment.Hook == NativeHookRDMA && attachment.Mode == NativeModeRDMADV:
 		commands = []string{
 			fmt.Sprintf("?create interface rdma host-if %s name %s mode dv", attachment.LinuxInterface, attachment.VPPInterface),

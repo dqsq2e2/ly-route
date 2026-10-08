@@ -41,25 +41,28 @@ package. Compile jobs default to two to limit memory use on Atom-class systems.
 
 The default single binary package is:
 
-- Package: `linux-image-6.18.54-velo5x0`
+- Package: `linux-image-6.18.54-velo5x0-r2`
 - Version: `6.18.54-1` (override only the Debian revision with `--package-version`)
 - Architecture: `amd64`
-- Filename: `linux-image-6.18.54-velo5x0_6.18.54-1_amd64.deb`
+- Filename: `linux-image-6.18.54-velo5x0-r2_6.18.54-1_amd64.deb`
 - Default output: `dist/hardware/velo5x0/`; `--out DIR` is the integration contract.
 - The final stdout line is its absolute path; logs go to stderr.
 - A sibling `<filename>.sha256` file covers the finished package.
 
 No headers, debug, libc-dev or separate glue package is emitted. Both glue
 modules are built against the just-built kernel and `Module.symvers`, installed
-under `/lib/modules/6.18.54-velo5x0/extra/velo5x0/`, and included in the image
-package. The package also includes `/boot/vmlinuz-6.18.54-velo5x0`,
-`/boot/config-6.18.54-velo5x0`, `/boot/System.map-6.18.54-velo5x0`, all selected
+under `/lib/modules/6.18.54-velo5x0-r2/extra/velo5x0/`, and included in the image
+package. The package also includes `/boot/vmlinuz-6.18.54-velo5x0-r2`,
+`/boot/config-6.18.54-velo5x0-r2`, `/boot/System.map-6.18.54-velo5x0-r2`, all selected
 kernel modules, builtin metadata and depmod indexes. Private build/source
 symlinks are removed.
 
 Linux 6.18 provides both DSA and EDSA protocols through `tag_dsa.ko`, not a
 separate `tag_edsa.ko`. Package checks require both protocol aliases in that
-module as well as the board drivers.
+module as well as the board drivers. Revision r2 additionally requires tun,
+vhost_net, vhost and vhost_iotlb for VPP LCP control interfaces, with VHOST_TASK
+built in. Its distinct release and module directory preserve the old kernel
+for rollback when installing it on an existing appliance.
 
 `Depends: kmod, initramfs-tools, linux-base (>= 4.5), debianutils`;
 `Recommends: firmware-atheros`; `Provides: linux-image`.
@@ -75,7 +78,7 @@ service in this package.
 `SOURCE_DATE_EPOCH` defaults to zero; build user/host/version and timestamps are
 fixed. The package embeds the original licenses, five patches, final glue,
 fragment, builder and an input SHA256 manifest in
-`/usr/share/doc/linux-image-6.18.54-velo5x0/`, along with kernel URL/hash,
+`/usr/share/doc/linux-image-6.18.54-velo5x0-r2/`, along with kernel URL/hash,
 compiler and Ly Route revision. Source licensing obligations include the
 upstream kernel tarball plus these adaptation inputs; keep them with release
 source. The binary is unsigned: Secure Boot signing is a separate integration

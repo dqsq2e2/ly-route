@@ -66,6 +66,9 @@ func run() error {
 		options = append(options, httpapi.WithDHCPLeases(serviceRuntime.KeaMemfileLeaseCollector{Path: env("LY_ROUTE_KEA_LEASE_FILE", serviceRuntime.DefaultKeaDHCP4LeaseFile)}))
 	}
 	vppctl := env("LY_ROUTE_VPPCTL", "vppctl")
+	options = append(options, httpapi.WithWANLinkRuntime(vppctlWANLinkRuntime{
+		binary: vppctl, run: runVPPCTLTelemetryCommand,
+	}))
 	if envBool("LY_ROUTE_ENABLE_VPP_INTERFACE_TELEMETRY", true) {
 		options = append(options, httpapi.WithInterfaceTelemetry(vppctlInterfaceTelemetry{binary: vppctl}))
 	}

@@ -54,6 +54,19 @@ interface_name_safe() {
   esac
 }
 
+native_xdp_attached() {
+  ip -j -d link show dev "$1" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    links = json.load(sys.stdin)
+    xdp = links[0].get("xdp", {})
+    valid = xdp.get("mode") == 1 and bool(xdp.get("prog", {}).get("id"))
+except (ValueError, IndexError, TypeError, AttributeError):
+    valid = False
+sys.exit(0 if valid else 1)
+'
+}
+
 probe_native_candidate() {
   probe_interface=$1
   probe_hook=$2
@@ -73,7 +86,8 @@ probe_native_candidate() {
       if active_hardware=$(vppctl show hardware-interfaces "lyroute-$probe_interface" 2>/dev/null) &&
          printf '%s\n' "$active_hardware" | tr -d '\r' | grep -q "^[[:space:]]*netdev $probe_interface\$"; then
         if printf '%s\n' "$active_hardware" | grep -q '^[[:space:]]*error ' ||
-           ! printf '%s\n' "$active_hardware" | grep -q 'flags:.*admin-up.*zero-copy'; then
+           ! printf '%s\n' "$active_hardware" | grep -q 'flags:.*admin-up.*zero-copy' ||
+           ! native_xdp_attached "$probe_interface"; then
           return 1
         fi
         printf '%s\n' 100
@@ -119,6 +133,12 @@ probe_native_candidate() {
   if ! vppctl set interface state "$probe_vpp_interface" up >/dev/null 2>&1 ||
      ! probe_hardware=$(vppctl show hardware-interfaces "$probe_vpp_interface" 2>/dev/null) ||
      printf '%s\n' "$probe_hardware" | grep -q '^[[:space:]]*error '; then
+    vppctl $probe_delete >/dev/null 2>&1 || true
+    active_probe_kind=
+    active_probe_name=
+    return 1
+  fi
+  if [ "$probe_hook" = af_xdp ] && ! native_xdp_attached "$probe_interface"; then
     vppctl $probe_delete >/dev/null 2>&1 || true
     active_probe_kind=
     active_probe_name=
@@ -504,7 +524,7 @@ for interface_name in $(split_csv "$LY_ROUTE_VPP_DATA_INTERFACES"); do
       native_plugin=$3
       if printf '%s\n' "$plugin_output" | grep -q "$native_plugin"; then
         if native_score=$(probe_native_candidate "$interface_name" "$native_hook" "$native_mode"); then
-          candidate="{\"tier\":\"vpp_native\",\"hook\":\"$native_hook\",\"mode\":\"$native_mode\",\"source\":\"runtime_probe\",\"runtime_verified\":true,\"native\":true,\"high_performance\":true,\"observed_at\":\"$observed_at\",\"valid_until\":\"$valid_until\",\"performance_score\":$native_score,\"smart_qos_plugin_available\":$smart_qos_plugin_available}"
+          candidate="{\"tier\":\"vpp_native\",\"hook\":\"$native_hook\",\"mode\":\"$native_mode\",\"source\":\"runtime_probe\",\"runtime_verified\":true,\"native\":true,\"high_performance\":true,\"mac_address\":\"$(json_escape "$interface_mac")\",\"observed_at\":\"$observed_at\",\"valid_until\":\"$valid_until\",\"performance_score\":$native_score,\"smart_qos_plugin_available\":$smart_qos_plugin_available}"
           if [ -n "$native_candidate" ]; then native_candidate="$native_candidate,$candidate"; else native_candidate=$candidate; fi
         fi
       fi

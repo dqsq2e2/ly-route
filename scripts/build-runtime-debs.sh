@@ -444,8 +444,59 @@ def commands_from_operation(operation):
     for field in ("commands", "Commands", "vppctl_commands", "VPPCtlCommands"):
         commands = operation.get(field)
         if isinstance(commands, list) and all(isinstance(command, str) for command in commands):
-            return [command.strip() for command in commands if command.strip()]
+            return normalize_af_xdp_commands(operation, [command.strip() for command in commands if command.strip()])
     return []
+
+def normalize_af_xdp_commands(operation, commands):
+    if operation_name(operation) != "vpp.dataplane.attach":
+        return commands
+    payload = operation.get("Payload", operation.get("payload", {}))
+    if not isinstance(payload, dict) or payload.get("hook") != "af_xdp":
+        return commands
+    host = str(payload.get("linux_interface", "")).strip()
+    interface = str(payload.get("vpp_interface", "")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,15}", host) or not re.fullmatch(r"[A-Za-z0-9_.:-]+", interface):
+        raise ValueError("invalid persisted AF_XDP identity")
+    mac = str(payload.get("mac_address", "")).strip()
+    if not mac:
+        root = os.environ.get("LY_ROUTE_SYSFS_ROOT", "/sys")
+        with open(os.path.join(root, "class", "net", host, "address"), encoding="ascii") as source:
+            mac = source.read().strip()
+    if not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", mac):
+        raise ValueError("invalid AF_XDP physical MAC")
+    result = []
+    for command in commands:
+        effective = command_without_optional_prefix(command)
+        if effective.startswith("create interface af_xdp "):
+            # Upgrade old installer replay plans without changing saved user roles.
+            result.extend([
+                f"?create interface af_xdp host-if {host} name {interface} num-rx-queues all zero-copy",
+                f"set interface mac address {interface} {mac}",
+            ])
+        elif not effective.startswith(f"set interface mac address {interface} "):
+            result.append(command)
+    return result
+
+def replay_af_xdp_already_present(vppctl, command):
+    argv = shlex.split(command)
+    if argv[:3] != ["create", "interface", "af_xdp"]:
+        return False
+    host = argv[argv.index("host-if") + 1]
+    interface = argv[argv.index("name") + 1]
+    result = run_vppctl(vppctl, f"show hardware-interfaces {interface}")
+    hardware = result.stdout.replace("\r", "")
+    if result.returncode or not re.search(r"(?m)^" + re.escape(interface) + r"\s+\d+\s", hardware):
+        return False
+    if not re.search(r"(?m)^\s*netdev " + re.escape(host) + r"$", hardware):
+        raise ValueError("existing AF_XDP interface belongs to another netdev")
+    if re.search(r"(?m)^\s*error ", hardware) or not re.search(r"flags:.*zero-copy", hardware):
+        raise ValueError("existing AF_XDP attachment is unhealthy")
+    observed = subprocess.run(["ip", "-j", "-d", "link", "show", "dev", host],
+                              text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    links = json.loads(observed.stdout) if observed.returncode == 0 else []
+    if not links or not links[0].get("xdp", {}).get("prog", {}).get("id"):
+        raise ValueError("existing AF_XDP attachment has lost its XDP program")
+    return True
 
 def commands_from_map(operation, command_map):
     operations = command_map.get("operations", {})
@@ -1122,7 +1173,7 @@ for index, operation in enumerate(operations):
             fail_with_receipt(str(err))
         if not dry_run:
             try:
-                if replay_abf_policy_already_present(vppctl, effective_command):
+                if replay_af_xdp_already_present(vppctl, effective_command) or replay_abf_policy_already_present(vppctl, effective_command):
                     result_entry = {"command": receipt_command, "status": "already-applied"}
                     if effective_command != command:
                         result_entry["effective_command"] = effective_command

@@ -191,7 +191,20 @@ textarea { min-height: 84px; resize: vertical; }
 }
 
 @media (max-width: 900px) {
-  .app-shell.wifi-workspace-active { grid-template-columns: minmax(0, 1fr); }
-  .app-shell.wifi-workspace-active .paui-body { grid-column: 1; grid-row: 2; min-height: 0; }
-  .app-shell.wifi-workspace-active:not(.mobile-menu-open) .paui-sidebar { display: none; }
+  .app-shell.wifi-workspace-active, .app-shell.lan-wan-workspace-active { grid-template-columns: minmax(0, 1fr); }
+  .app-shell.wifi-workspace-active .paui-body, .app-shell.lan-wan-workspace-active .paui-body { grid-column: 1; grid-row: 2; min-height: 0; }
+  .app-shell.wifi-workspace-active:not(.mobile-menu-open) .paui-sidebar, .app-shell.lan-wan-workspace-active:not(.mobile-menu-open) .paui-sidebar { display: none; }
+  .list-content > .lan-wan-table { display: block !important; min-width: 0; height: auto !important; min-height: 0 !important; max-height: none !important; }
+  .list-content > .lan-wan-table thead { display: none !important; }
+  .list-content > .lan-wan-table tbody { display: block !important; height: auto !important; }
+  .list-content > .lan-wan-table tbody tr { display: block !important; height: auto !important; min-height: 0 !important; max-height: none !important; }
+  .list-content > .lan-wan-table tbody td { display: grid !important; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; width: auto; height: auto !important; min-height: 36px !important; max-height: none !important; white-space: normal; }
+  .lan-wan-table tbody td::before { content: attr(data-label); color: var(--cr-muted); }
+  .list-content > .lan-wan-table tbody td:last-child { grid-template-columns: 92px repeat(2, minmax(0, 1fr)); }
+  .lan-wan-table .cell-text { white-space: normal; overflow-wrap: anywhere; }
+  .list-content > .lan-wan-table tbody tr.placeholder-row { display: none !important; }
+}
+
+@media (min-width: 901px) {
+  .lan-wan-table th:nth-child(3), .lan-wan-table td:nth-child(3) { width: 162px; }
 }

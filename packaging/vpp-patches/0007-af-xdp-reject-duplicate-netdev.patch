@@ -1,0 +1,26 @@
+diff --git a/src/plugins/af_xdp/device.c b/src/plugins/af_xdp/device.c
+--- a/src/plugins/af_xdp/device.c
++++ b/src/plugins/af_xdp/device.c
+@@ -593,6 +593,22 @@
+       goto err0;
+     }
+ 
++  /* A failed duplicate socket setup used to detach the existing netdev's
++   * XDP program in af_xdp_delete_if(), silently stopping its RX path. */
++  pool_foreach (ad, am->devices)
++    {
++      if (strcmp (ad->linux_ifname, args->linux_ifname) == 0 &&
++          ((!ad->netns && !args->netns) ||
++           (ad->netns && args->netns &&
++            strcmp (ad->netns, args->netns) == 0)))
++        {
++          args->rv = VNET_API_ERROR_INVALID_VALUE;
++          args->error =
++            clib_error_return (0, "host interface already attached");
++          goto err0;
++        }
++    }
++
+   if (args->rxq_size < VLIB_FRAME_SIZE || args->txq_size < VLIB_FRAME_SIZE ||
+       args->rxq_size > 65535 || args->txq_size > 65535 ||
+       !is_pow2 (args->rxq_size) || !is_pow2 (args->txq_size))
