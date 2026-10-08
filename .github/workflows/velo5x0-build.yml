@@ -75,7 +75,8 @@ jobs:
           revision=$(jq -r .head_sha run.json)
           gh api "repos/$GH_REPO/actions/runs/$EVIDENCE_RUN/jobs" > jobs.json
           job=$(jq -r '.jobs[] | select(.name == "installer") | .id' jobs.json)
-          gh api "repos/$GH_REPO/actions/jobs/$job/logs" > installer.log
+          gh api --allow-escape-sequences "repos/$GH_REPO/actions/jobs/$job/logs" > installer.log
+          sed -i 's/\x1b\[[0-9;]*[mK]//g' installer.log
           tail -c 24000 installer.log > source-failure-tail.log
           jq -n --arg sha "$revision" --rawfile summary source-failure-tail.log \
             '{name:"5x0 repair evidence",head_sha:$sha,status:"completed",conclusion:"neutral",output:{title:"Original installer failure log",summary:("```\n"+$summary+"\n```")}}' > report.json
@@ -105,14 +106,28 @@ jobs:
           deb=$(find kernel-debs -maxdepth 1 -name 'linux-image-*_amd64.deb' -print -quit)
           dpkg-deb -x "$deb" kernel-root
           provenance=$(find kernel-root/usr/share/doc -name build-provenance.txt -print -quit)
-          grep -Fxq "Ly-Route-Revision: $revision" "$provenance"
+          doc=$(dirname "$provenance")
+          mkdir source-inputs
+          gh api --allow-escape-sequences "repos/$GH_REPO/tarball/$revision" > source-inputs.tar.gz
+          tar -xzf source-inputs.tar.gz -C source-inputs --strip-components=1
+          cmp source-inputs/packaging/hardware/velo5x0/kernel.config "$doc/kernel.config"
+          cmp source-inputs/scripts/build-velo5x0-kernel.sh "$doc/build-velo5x0-kernel.sh"
+          diff -r source-inputs/packaging/hardware/velo5x0/patches "$doc/patches"
+          for file in Makefile vc-edge5x0-mdio.c vc-edge5x0-dsa.c; do
+            cmp "source-inputs/packaging/hardware/velo5x0/glue/$file" "$doc/glue/$file"
+          done
+          if ! grep -Fxq "Ly-Route-Revision: $revision" "$provenance"; then
+            grep -Fxq 'Ly-Route-Revision: unknown' "$provenance"
+            echo "::warning title=Kernel revision metadata::Embedded revision is unknown; exact archived inputs matched CI commit $revision."
+          fi
+          cp run.json kernel-debs/CI-SOURCE-PROVENANCE.json
           tag="velo5x0-kernel-repair-${revision:0:12}"
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --target "$revision" --prerelease \
               --title "5x0 kernel repair ${revision:0:12}" \
               --notes "Verified kernel from CI run $EVIDENCE_RUN. Diagnostic hardware hotfix only, not a completed installer release."
           fi
-          gh release upload "$tag" kernel-debs/*.deb kernel-debs/*.sha256 --clobber
+          gh release upload "$tag" kernel-debs/*.deb kernel-debs/*.sha256 kernel-debs/CI-SOURCE-PROVENANCE.json --clobber
           echo "kernel_release_tag=$tag" >> "$GITHUB_STEP_SUMMARY"
 
   kernel:
