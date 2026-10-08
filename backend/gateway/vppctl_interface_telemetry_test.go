@@ -1,6 +1,11 @@
 package gateway
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestParseVPPInterfaceTelemetryStopsAtEveryInterfaceHeader(t *testing.T) {
 	output := `              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
@@ -45,5 +50,58 @@ tap4096                           3      up          9000/0/0/0     rx packets  
 		if _, exists := item["work_mode"]; exists {
 			t.Fatalf("collector guessed work_mode instead of using apply readback: %#v", item)
 		}
+	}
+}
+
+func TestInterfaceTelemetryReportsObservedLANSessions(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		nat         string
+		unavailable bool
+		want        any
+	}{
+		{"two LAN sessions", "NAT44 ED sessions:\n i2o 192.168.88.120 proto TCP port 1234 fib 0\n i2o 192.168.88.120 proto UDP port 1235 fib 0\n i2o 192.0.2.10 proto TCP port 5555 fib 0\n", false, int64(2)},
+		{"observed zero", "NAT44 ED sessions:\n-------- thread 0 vpp_main: 0 sessions --------\n", false, int64(0)},
+		{"unavailable", "", true, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			collector := vppctlInterfaceTelemetry{binary: "vppctl", run: func(_ context.Context, _ string, args ...string) (string, error) {
+				switch strings.Join(args, " ") {
+				case "show interface":
+					return "lyroute-ge2 1 up 1500/0/0/0 rx bytes 1024\n tx bytes 512\nlyroute-spare 2 down 1500/0/0/0\n", nil
+				case "show interface address":
+					return "lyroute-ge2 (up):\n L3 192.168.88.66/24\nlyroute-spare (dn):\n", nil
+				case "show nat44 sessions":
+					if test.unavailable {
+						return "", errors.New("no NAT")
+					}
+					return test.nat, nil
+				case "show nat44 ei sessions detail":
+					return "unknown input `show nat44 ei sessions detail'", nil
+				default:
+					t.Fatalf("unexpected command %v", args)
+					return "", nil
+				}
+			}}
+			items, err := collector.Interfaces(context.Background())
+			if err != nil || len(items) != 2 {
+				t.Fatalf("items = %#v, %v", items, err)
+			}
+			if got := items[0]["sessions"]; got != test.want {
+				t.Fatalf("LAN sessions = %#v, want %#v", got, test.want)
+			}
+			if _, exists := items[1]["sessions"]; exists {
+				t.Fatal("unaddressed interface must not fabricate zero sessions")
+			}
+			if items[1]["admin_state"] != "down" {
+				t.Fatalf("down interface admin state = %#v", items[1])
+			}
+		})
+	}
+}
+
+func TestInterfaceTelemetryRejectsNonInterfaceLines(t *testing.T) {
+	if items := parseAllVPPInterfaceTelemetry("unknown input `show interface'\n"); len(items) != 0 {
+		t.Fatalf("invalid CLI reply became interfaces: %#v", items)
 	}
 }

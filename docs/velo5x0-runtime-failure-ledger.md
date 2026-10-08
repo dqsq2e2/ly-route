@@ -66,6 +66,18 @@ module directory so an update does not overwrite the running kernel.
 The focused WAN/runtime-interface Go tests, AF_XDP replay/native-selection
 tests, UI formatter tests and kernel/glue package contract checks passed.
 The package test now rejects a missing vhost_net module explicitly.
+LAN session telemetry no longer fabricates zero. It counts observed NAT44
+inside endpoints by the interface's live subnet; missing address/session
+readback leaves the value unavailable. Focused telemetry tests passed and the
+fresh controller was deployed with SHA-256
+432fdd250c2d23b45fa327bb530deb5a2f4196ab6f331ba857eee2c464b01fcd.
+
+CI run 37777198462 built and uploaded the r2 kernel successfully, but its
+installer source-validation step failed. The complete source-validation
+sequence passed locally. Direct log/artifact downloads hit TLS EOFs at the
+Actions storage endpoint; the optional repair-evidence job retrieves the
+original failure log through CI and preserves the verified kernel separately.
+The installer build failure has not yet been diagnosed or cleared.
 
 The broader httpapi suite timed out in
 TestGatewayTelemetryIgnoresOlderCompletionAfterNewerSuccess: its fixture

@@ -15,6 +15,11 @@ on:
       - 'packaging/vpp-patches/**'
       - 'packaging/hardware/velo5x0/**'
   workflow_dispatch:
+    inputs:
+      evidence_run:
+        description: 'Recover logs and kernel from an existing 5x0 run; leave blank for a full build'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -35,7 +40,52 @@ env:
   LY_ROUTE_VPP_COMMIT: 744d3c7159ae130fb57f669a826ff1e45ed51836
 
 jobs:
+  repair-evidence:
+    if: github.event_name == 'workflow_dispatch' && inputs.evidence_run != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: write
+      contents: write
+    steps:
+      - name: Recover the source failure and verified kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVIDENCE_RUN: ${{ inputs.evidence_run }}
+        run: |
+          set -euo pipefail
+          [[ "$EVIDENCE_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$EVIDENCE_RUN" > run.json
+          test "$(jq -r .head_branch run.json)" = 5x0
+          test "$(jq -r .path run.json)" = .github/workflows/velo5x0-build.yml
+          revision=$(jq -r .head_sha run.json)
+          gh api "repos/$GH_REPO/actions/runs/$EVIDENCE_RUN/jobs" > jobs.json
+          job=$(jq -r '.jobs[] | select(.name == "installer") | .id' jobs.json)
+          gh api "repos/$GH_REPO/actions/jobs/$job/logs" > installer.log
+          tail -c 24000 installer.log > source-failure-tail.log
+          jq -n --arg sha "$revision" --rawfile summary source-failure-tail.log \
+            '{name:"5x0 repair evidence",head_sha:$sha,status:"completed",conclusion:"neutral",output:{title:"Original installer failure log",summary:("```\n"+$summary+"\n```")}}' > report.json
+          gh api --method POST "repos/$GH_REPO/check-runs" --input report.json
+          test "$(jq -r '.jobs[] | select(.name == "kernel") | .conclusion' jobs.json)" = success
+          gh run download "$EVIDENCE_RUN" -n velo5x0-kernel -D kernel-debs
+          (cd kernel-debs && sha256sum -c ./*.sha256)
+          deb=$(find kernel-debs -maxdepth 1 -name 'linux-image-*_amd64.deb' -print -quit)
+          dpkg-deb -x "$deb" kernel-root
+          provenance=$(find kernel-root/usr/share/doc -name build-provenance.txt -print -quit)
+          grep -Fxq "Ly-Route-Revision: $revision" "$provenance"
+          tag="velo5x0-kernel-repair-${revision:0:12}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$revision" --prerelease \
+              --title "5x0 kernel repair ${revision:0:12}" \
+              --notes "Verified kernel from CI run $EVIDENCE_RUN. Diagnostic hardware hotfix only, not a completed installer release."
+          fi
+          gh release upload "$tag" kernel-debs/*.deb kernel-debs/*.sha256 installer.log --clobber
+          echo "kernel_release_tag=$tag" >> "$GITHUB_STEP_SUMMARY"
+
   kernel:
+    if: github.event_name != 'workflow_dispatch' || inputs.evidence_run == ''
     runs-on: ubuntu-24.04
     container: debian:bookworm
     timeout-minutes: 60
@@ -92,6 +142,7 @@ jobs:
           python3 scripts/test-vpp-apply-af-xdp.py
           bash scripts/test-vpp-native-selection.sh
           python3 scripts/test-hotfix-serial.py
+          bash scripts/test-hotfix-kernel.sh
           bash scripts/test-velo5x0-installer.sh
           bash packaging/hardware/velo5x0/glue/tests/check.sh
       - uses: actions/cache@v5

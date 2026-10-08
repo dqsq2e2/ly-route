@@ -9020,7 +9020,7 @@ func (server *Server) normalizeInterfaceSnapshot(ctx context.Context, items []ma
 				}
 			}
 		}
-		for _, key := range []string{"rx_bps", "tx_bps", "rx_pps", "tx_pps", "sessions"} {
+		for _, key := range []string{"rx_bps", "tx_bps", "rx_pps", "tx_pps"} {
 			if _, ok := clone[key]; !ok {
 				clone[key] = 0
 			}

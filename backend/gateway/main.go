@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -630,6 +629,7 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 
 type vppctlInterfaceTelemetry struct {
 	binary string
+	run    gatewayVPPCTLRunner
 }
 
 func (collector vppctlInterfaceTelemetry) Interfaces(ctx context.Context) ([]map[string]any, error) {
@@ -637,11 +637,17 @@ func (collector vppctlInterfaceTelemetry) Interfaces(ctx context.Context) ([]map
 	if binary == "" {
 		binary = "vppctl"
 	}
-	output, err := exec.CommandContext(ctx, binary, "show", "interface").CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("vppctl show interface failed: %w: %s", err, strings.TrimSpace(string(output)))
+	run := collector.run
+	if run == nil {
+		run = runVPPCTLTelemetryCommand
 	}
-	return parseVPPInterfaceTelemetry(string(output)), nil
+	output, err := run(ctx, binary, "show", "interface")
+	if err != nil {
+		return nil, fmt.Errorf("vppctl show interface failed: %w: %s", err, strings.TrimSpace(output))
+	}
+	items := parseVPPInterfaceTelemetry(output)
+	decorateInterfaceNATSessions(ctx, binary, run, items)
+	return items, nil
 }
 
 func parseVPPInterfaceTelemetry(output string) []map[string]any {
@@ -669,16 +675,16 @@ func parseAllVPPInterfaceTelemetry(output string) []map[string]any {
 		if len(fields) == 0 {
 			continue
 		}
+		header := false
 		if len(fields) >= 4 {
-			if _, err := strconv.Atoi(fields[1]); err == nil {
-				current = nil
-			}
+			_, err := strconv.Atoi(fields[1])
+			header = err == nil && (fields[2] == "up" || fields[2] == "down" || fields[2] == "dn")
 		}
-		if current == nil && len(fields) >= 4 {
+		if header {
 			current = map[string]any{
 				"id":            fields[0],
 				"name":          fields[0],
-				"admin_state":   "up",
+				"admin_state":   fields[2],
 				"runtime_state": "running",
 				"rx_bps":        0,
 				"tx_bps":        0,
@@ -688,7 +694,6 @@ func parseAllVPPInterfaceTelemetry(output string) []map[string]any {
 				"tx_bytes":      0,
 				"rx_packets":    0,
 				"tx_packets":    0,
-				"sessions":      0,
 			}
 			if len(fields) > 2 {
 				current["link_state"] = fields[2]
