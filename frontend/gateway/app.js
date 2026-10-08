@@ -188,7 +188,6 @@ function renderMenu() {
 function setMobileMenuOpen(open) {
   const visible = Boolean(open);
   el.appShell.classList.toggle('mobile-menu-open', visible);
-  if (el.sidebar && window.matchMedia('(max-width: 900px)').matches) el.sidebar.style.display = visible ? 'block' : 'none';
   el.mobileMenuToggle.setAttribute('aria-expanded', String(visible));
   el.mobileMenuToggle.setAttribute('aria-label', visible ? '关闭菜单' : '打开菜单');
   el.mobileMenuToggle.title = visible ? '关闭菜单' : '打开菜单';
@@ -210,9 +209,6 @@ function openPage(id, updateLocation = true) {
 }
 function renderWorkspace() {
   const page = currentPage();
-  el.appShell.classList.toggle('fan-workspace-active', page.id === 'system/fan');
-  el.appShell.classList.toggle('wifi-workspace-active', page.id === 'network/wifi');
-  el.appShell.classList.toggle('lan-wan-workspace-active', page.id === 'network/proxy_main');
   if (page.id === 'system/fan' && gatewayFan.isMounted()) {
     gatewayFan.update();
     return;
@@ -306,7 +302,7 @@ function renderSystemUsersTable() {
 		const username = item.username || item.name || '';
 		const role = item.role || '';
 		const stateText = item.enabled === false ? '禁用' : '启用';
-		return `<tr><td>${safeText(username)}</td><td>${safeText(role)}</td><td>${renderNetworkCell(stateText, null, 0)}</td><td><button type="button" data-auth-action="password" data-user="${escapeAttr(username)}">改密</button>${username === 'admin' ? '' : `<button type="button" data-auth-action="delete" data-user="${escapeAttr(username)}">删除</button>`}</td></tr>`;
+		return `<tr><td data-label="用户名">${safeText(username)}</td><td data-label="角色">${safeText(role)}</td><td data-label="状态">${renderNetworkCell(stateText, null, 0)}</td><td data-label="操作"><button type="button" data-auth-action="password" data-user="${escapeAttr(username)}">改密</button>${username === 'admin' ? '' : `<button type="button" data-auth-action="delete" data-user="${escapeAttr(username)}">删除</button>`}</td></tr>`;
 	}).join('') : renderEmptyTableRow(4, '暂无系统用户');
         return `<table class="data-table"><thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody>${renderFixedTableRows(body, users.length, 4, '暂无系统用户')}</tbody></table>`;
 }
@@ -373,7 +369,7 @@ function renderTopDomainsTable() {
 function renderTelemetryTable(cols, rows, className = '', renderHeadCell = null, colgroup = '') {
   const tableClass = `data-table${className ? ` ${className}` : ''}`;
   const headCells = cols.map((col) => renderHeadCell ? renderHeadCell(col) : `<th>${col}</th>`).join('');
-  const body = rows.length ? rows.map((row) => `<tr>${row.map((value) => `<td>${renderTelemetryCell(value)}</td>`).join('')}</tr>`).join('') : '';
+  const body = rows.length ? rows.map((row) => `<tr>${row.map((value, index) => `<td data-label="${escapeAttr(cols[index])}">${renderTelemetryCell(value)}</td>`).join('')}</tr>`).join('') : '';
   return `<table class="${tableClass}">${colgroup}<thead><tr>${headCells}</tr></thead><tbody>${renderFixedTableRows(body, rows.length, cols.length, '暂无遥测数据')}</tbody></table>`;
 }
 function telemetryRows(key, mapper) {
@@ -991,7 +987,7 @@ function renderNetworkTable(page) {
       ? (index) => `<button class="link-btn" data-row-action="edit" data-row="${index}" type="button">编辑</button><button class="link-btn" data-row-action="delete" data-row="${index}" type="button">删除</button>`
       : (index) => `<button class="link-btn" data-row-action="edit" data-row="${index}" type="button">编辑</button><button class="link-btn" data-row-action="delete" data-row="${index}" type="button">删除</button>`;
   const colspan = config.columns.length + 1 + (canMutate ? 1 : 0);
-  const rowsHTML = rowEntries.map(({ row, index }) => `<tr><td><input data-row-check="${index}" type="checkbox" ${canMutate ? '' : 'disabled'} ${state.checkedRows.has(index) ? 'checked' : ''}></td>${row.map((value, colIndex) => `<td>${renderNetworkCell(value, page, colIndex)}</td>`).join('')}${canMutate ? `<td>${actionButtons(index)}</td>` : ''}</tr>`).join('');
+  const rowsHTML = rowEntries.map(({ row, index }) => `<tr><td data-label="选择"><input data-row-check="${index}" type="checkbox" ${canMutate ? '' : 'disabled'} ${state.checkedRows.has(index) ? 'checked' : ''}></td>${row.map((value, colIndex) => `<td data-label="${escapeAttr(config.columns[colIndex])}">${renderNetworkCell(value, page, colIndex)}</td>`).join('')}${canMutate ? `<td data-label="操作">${actionButtons(index)}</td>` : ''}</tr>`).join('');
   return `<table class="${tableClass}"><thead><tr><th><input data-select-all type="checkbox" ${canMutate ? '' : 'disabled'}></th>${config.columns.map((col) => `<th>${safeText(col)}</th>`).join('')}${canMutate ? '<th>操作</th>' : ''}</tr></thead><tbody>${renderFixedTableRows(rowsHTML, rowEntries.length, colspan)}</tbody></table>`;
 }
 function renderDomainGroupContent(page) {
@@ -1004,7 +1000,7 @@ function renderObjectGroupTable(page) {
   const config = networkPages[page.id];
   const rowEntries = networkTableRowEntries(page);
   const actionButtons = (index) => `<button class="link-btn" data-row-action="edit" data-row="${index}" type="button">编辑</button><button class="link-btn" data-row-action="delete" data-row="${index}" type="button">删除</button>`;
-  const rowsHTML = rowEntries.map(({ row, index }) => `<tr><td><input data-row-check="${index}" type="checkbox" ${state.checkedRows.has(index) ? 'checked' : ''}></td>${row.slice(0, config.columns.length).map((value, colIndex) => `<td>${renderNetworkCell(value, page, colIndex)}</td>`).join('')}<td>${actionButtons(index)}</td></tr>`).join('');
+  const rowsHTML = rowEntries.map(({ row, index }) => `<tr><td data-label="选择"><input data-row-check="${index}" type="checkbox" ${state.checkedRows.has(index) ? 'checked' : ''}></td>${row.slice(0, config.columns.length).map((value, colIndex) => `<td data-label="${escapeAttr(config.columns[colIndex])}">${renderNetworkCell(value, page, colIndex)}</td>`).join('')}<td data-label="操作">${actionButtons(index)}</td></tr>`).join('');
   return `<table class="data-table"><thead><tr><th><input data-select-all type="checkbox"></th>${config.columns.map((col) => `<th>${safeText(col)}</th>`).join('')}<th>操作</th></tr></thead><tbody>${renderFixedTableRows(rowsHTML, rowEntries.length, config.columns.length + 2)}</tbody></table>`;
 }
 function renderDomainGroupDisplay(page) {
@@ -1357,7 +1353,7 @@ function isRouteIpv6Row(row) {
 function renderDhcpTable(page) {
   const config = networkPages[page.id];
   const rows = dhcpRows(page);
-  const rowsHTML = rows.map(({ row, index }) => `<tr><td><input data-row-check="${index}" type="checkbox" ${state.checkedRows.has(index) ? 'checked' : ''}></td>${row.map((value, colIndex) => `<td>${renderNetworkCell(value, page, colIndex)}</td>`).join('')}<td><button class="link-btn" data-row-action="edit" data-row="${index}" type="button">编辑</button><button class="link-btn" data-row-action="delete" data-row="${index}" type="button">删除</button></td></tr>`).join('');
+  const rowsHTML = rows.map(({ row, index }) => `<tr><td data-label="选择"><input data-row-check="${index}" type="checkbox" ${state.checkedRows.has(index) ? 'checked' : ''}></td>${row.map((value, colIndex) => `<td data-label="${escapeAttr(config.columns[colIndex])}">${renderNetworkCell(value, page, colIndex)}</td>`).join('')}<td data-label="操作"><button class="link-btn" data-row-action="edit" data-row="${index}" type="button">编辑</button><button class="link-btn" data-row-action="delete" data-row="${index}" type="button">删除</button></td></tr>`).join('');
   return `<table class="data-table"><thead><tr><th><input data-select-all type="checkbox"></th>${config.columns.map((col) => `<th>${safeText(col)}</th>`).join('')}<th>操作</th></tr></thead><tbody>${renderFixedTableRows(rowsHTML, rows.length, config.columns.length + 2)}</tbody></table>`;
 }
 function dhcpRows(page) {
@@ -1398,7 +1394,7 @@ function wanLinkConfigured(row) {
 function renderProxyLogTable(page) {
   const cols = ['时间', '线路', '事件', '说明'];
   const logs = interfaceActionLogs();
-  return `<table class="data-table proxy-log-table"><colgroup><col class="log-col-time"><col class="log-col-line"><col class="log-col-event"><col class="log-col-desc"></colgroup><thead><tr>${cols.map((col) => `<th>${safeText(col)}</th>`).join('')}</tr></thead><tbody>${logs.length ? logs.map((row) => `<tr>${row.map((value) => `<td>${renderNetworkCell(value, page, 0)}</td>`).join('')}</tr>`).join('') : renderEmptyTableRow(cols.length, '暂无线路操作日志')}</tbody></table>`;
+  return `<table class="data-table proxy-log-table"><colgroup><col class="log-col-time"><col class="log-col-line"><col class="log-col-event"><col class="log-col-desc"></colgroup><thead><tr>${cols.map((col) => `<th>${safeText(col)}</th>`).join('')}</tr></thead><tbody>${logs.length ? logs.map((row) => `<tr>${row.map((value, index) => `<td data-label="${escapeAttr(cols[index])}">${renderNetworkCell(value, page, 0)}</td>`).join('')}</tr>`).join('') : renderEmptyTableRow(cols.length, '暂无线路操作日志')}</tbody></table>`;
 }
 function interfaceActionLogs() {
   const items = envelopeItems(state.controlPlane.audit);

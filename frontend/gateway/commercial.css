@@ -47,7 +47,7 @@ textarea { min-height: 84px; resize: vertical; }
 .login-box button[type="submit"] { min-height: 40px; margin-top: 22px; border-radius: 3px; background: var(--cr-blue); }
 
 .app-shell { display: grid; grid-template: var(--cr-header) minmax(0, 1fr) / var(--cr-sidebar) minmax(0, 1fr); width: 100vw; height: 100vh; min-height: 0; background: var(--cr-bg); }
-.paui-header { grid-column: 1 / -1; z-index: 10; padding: 0 18px; border-bottom: 1px solid #cfdce7; background: #fff; box-shadow: 0 1px 4px rgba(31, 67, 96, .045); }
+.paui-header { grid-column: 1 / -1; height: auto; z-index: 10; padding: 0 18px; border-bottom: 1px solid #cfdce7; background: #fff; box-shadow: 0 1px 4px rgba(31, 67, 96, .045); }
 .brand { gap: 11px; }
 .brand-mark { width: 36px; height: 36px; border: 1px solid #bad3e9; border-radius: 4px; background: #edf6fd; color: var(--cr-blue); font-size: 13px; font-weight: 800; }
 .brand strong { color: var(--cr-ink); font-size: 16px; font-weight: 700; }
@@ -71,7 +71,7 @@ textarea { min-height: 84px; resize: vertical; }
 .menu-page.is-active { background: var(--cr-blue-pale); color: var(--cr-blue-deep); font-weight: 700; }
 .menu-page.is-active::before { position: absolute; top: 8px; bottom: 8px; left: 0; width: 3px; border-radius: 0 2px 2px 0; background: var(--cr-blue); content: ""; }
 
-.paui-body { min-width: 0; min-height: 0; overflow: auto; background: var(--cr-bg); scrollbar-width: thin; scrollbar-color: #bdccd8 transparent; }
+.paui-body { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; background: var(--cr-bg); scrollbar-width: thin; scrollbar-color: #bdccd8 transparent; }
 .workspace { width: 100%; max-width: none; min-height: 100%; margin: 0; padding: 16px 18px 22px; }
 .page-card { min-height: calc(100vh - 98px); overflow: hidden; border: 1px solid #d2dee8; border-radius: 5px; background: #fff; box-shadow: 0 4px 14px rgba(35, 70, 99, .055); }
 .page-title { min-height: 52px; padding: 0 18px; border-bottom: 1px solid var(--cr-line); background: #fff; }
@@ -191,18 +191,30 @@ textarea { min-height: 84px; resize: vertical; }
 }
 
 @media (max-width: 900px) {
-  .app-shell.wifi-workspace-active, .app-shell.lan-wan-workspace-active { grid-template-columns: minmax(0, 1fr); }
-  .app-shell.wifi-workspace-active .paui-body, .app-shell.lan-wan-workspace-active .paui-body { grid-column: 1; grid-row: 2; min-height: 0; }
-  .app-shell.wifi-workspace-active:not(.mobile-menu-open) .paui-sidebar, .app-shell.lan-wan-workspace-active:not(.mobile-menu-open) .paui-sidebar { display: none; }
+  /* This theme loads after styles.css: collapse the shared shell, not individual pages. */
+  .app-shell { grid-template-columns: minmax(0, 1fr); }
+  .paui-body { grid-column: 1; grid-row: 2; min-height: 0; }
+  .paui-sidebar { top: var(--cr-header); z-index: 11; }
+  .app-shell:not(.mobile-menu-open) .paui-sidebar { display: none; }
+  .workspace { padding: 9px; }
   .list-content > .lan-wan-table { display: block !important; min-width: 0; height: auto !important; min-height: 0 !important; max-height: none !important; }
   .list-content > .lan-wan-table thead { display: none !important; }
   .list-content > .lan-wan-table tbody { display: block !important; height: auto !important; }
   .list-content > .lan-wan-table tbody tr { display: block !important; height: auto !important; min-height: 0 !important; max-height: none !important; }
-  .list-content > .lan-wan-table tbody td { display: grid !important; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; width: auto; height: auto !important; min-height: 36px !important; max-height: none !important; white-space: normal; }
+  .list-content > .lan-wan-table tbody td { display: grid !important; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; width: auto; height: auto !important; min-height: 36px !important; max-height: none !important; overflow: visible; white-space: normal; }
+  .list-content > .lan-wan-table tbody td > * { min-width: 0; max-height: none !important; }
   .lan-wan-table tbody td::before { content: attr(data-label); color: var(--cr-muted); }
   .list-content > .lan-wan-table tbody td:last-child { grid-template-columns: 92px repeat(2, minmax(0, 1fr)); }
   .lan-wan-table .cell-text { white-space: normal; overflow-wrap: anywhere; }
   .list-content > .lan-wan-table tbody tr.placeholder-row { display: none !important; }
+}
+
+@media (max-width: 600px) {
+  .workspace { padding: 7px; }
+  .page-title { min-height: 44px; padding: 0 11px; }
+  .page-title h1 { font-size: 16px; }
+  .page-body { padding: 9px; }
+  .management-network-form { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (min-width: 901px) {
