@@ -44,11 +44,8 @@ tap4096                           3      up          9000/0/0/0     rx packets  
 		t.Fatalf("WAN tx_bytes = %#v, want 339653", got)
 	}
 	for _, item := range items {
-		if _, exists := item["active_path"]; exists {
-			t.Fatalf("collector guessed active_path instead of using apply readback: %#v", item)
-		}
-		if _, exists := item["work_mode"]; exists {
-			t.Fatalf("collector guessed work_mode instead of using apply readback: %#v", item)
+		if item["active_path"] != "vpp" || item["work_mode"] != "vpp" {
+			t.Fatalf("live VPP interface must not depend on a historical attach receipt: %#v", item)
 		}
 	}
 }

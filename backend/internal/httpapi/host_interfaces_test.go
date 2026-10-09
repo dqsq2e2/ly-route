@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,6 +47,57 @@ func TestVelo5x0HostInventoryPortLabels(t *testing.T) {
 				t.Fatal("5x0 exclusions must not affect generic hardware")
 			}
 		})
+	}
+}
+
+func TestVelo5x0InterfaceSnapshotUsesLiveVPPPathWithoutAttachReceipt(t *testing.T) {
+	previous := hostInterfaceInventory
+	hostInterfaceInventory = func() []map[string]any {
+		return []map[string]any{
+			{"id": "enp0s20f2", "name": "enp0s20f2", "port_label": "GE1", "active_path": "kernel_stack", "work_mode": "kernel_stack", "link_state": "up"},
+			{"id": "enp0s20f3", "name": "enp0s20f3", "port_label": "GE2", "active_path": "kernel_stack", "work_mode": "kernel_stack", "link_state": "up"},
+			{"id": "lan1", "name": "lan1", "port_label": "LAN1", "active_path": "kernel_stack", "work_mode": "kernel_stack", "link_state": "down"},
+		}
+	}
+	t.Cleanup(func() { hostInterfaceInventory = previous })
+	t.Setenv("LY_ROUTE_MANAGEMENT_INTERFACE", "enp0s20f2")
+	server := New(WithVPPReceiptPath(filepath.Join(t.TempDir(), "missing-receipt.json")),
+		WithInterfaceTelemetry(fakeInterfaceTelemetry{items: []map[string]any{
+			{"id": "enp0s20f2", "vpp_interface": "lyroute-enp0s20f2", "active_path": "vpp", "work_mode": "vpp"},
+			{"id": "enp0s20f3", "vpp_interface": "lyroute-enp0s20f3", "active_path": "vpp", "work_mode": "vpp", "rx_bytes": int64(1024), "tx_bytes": int64(2048)},
+		}}))
+	for _, endpoint := range []string{"/api/v1/interfaces", "/api/v1/interfaces/GE2/stats"} {
+		response := request(t, server, http.MethodGet, endpoint)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s = %d: %s", endpoint, response.Code, response.Body.String())
+		}
+		var body struct {
+			Items []map[string]any `json:"items"`
+			Item  map[string]any   `json:"item"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Item != nil {
+			body.Items = append(body.Items, body.Item)
+		}
+		foundGE2 := false
+		for _, item := range body.Items {
+			switch item["id"] {
+			case "GE2":
+				foundGE2 = true
+				if item["active_path"] != "vpp" || item["work_mode"] != "vpp" || item["rx_bytes"] != float64(1024) || item["tx_bytes"] != float64(2048) {
+					t.Fatalf("GE2 live path or counters lost: %#v", item)
+				}
+			case "GE1", "LAN1":
+				if item["active_path"] != "kernel_stack" {
+					t.Fatalf("management or unattached DSA port became VPP: %#v", item)
+				}
+			}
+		}
+		if !foundGE2 {
+			t.Fatalf("%s omitted GE2: %s", endpoint, response.Body.String())
+		}
 	}
 }
 

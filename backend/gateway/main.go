@@ -662,6 +662,9 @@ func parseVPPInterfaceTelemetry(output string) []map[string]any {
 		item["id"] = linuxName
 		item["name"] = linuxName
 		item["vpp_interface"] = name
+		// Live interface readback proves VPP ownership, not a particular NIC driver.
+		item["active_path"] = "vpp"
+		item["work_mode"] = "vpp"
 		items = append(items, item)
 	}
 	return items
