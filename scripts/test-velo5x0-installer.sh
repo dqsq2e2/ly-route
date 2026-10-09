@@ -61,3 +61,61 @@ printf '%s\n' 'PASS: initialized DSA exposes all 12 physical ports'
 printf 'generic\n' > "$work/hardware"
 check_names "$(printf '%s\n' "$physical" eth0 eth1 | LC_ALL=C sort)"
 printf '%s\n' 'PASS: generic hardware keeps its PCI interface choices'
+
+definition=$(sed -n '/^probe_interface() {$/,/^}$/p' "$repo_root/scripts/build-auto-install-iso.sh")
+[[ -n $definition ]]
+definition=${definition//\/sys\//$work/sys/}
+definition=${definition//\/etc\/ly-route\/hardware/$work/hardware}
+definition=${definition//\/boot\//$work/boot/}
+eval "$definition"
+
+uname() { printf '%s\n' installer-test; }
+modprobe() { return 1; }
+mkdir -p "$work/sys/module/vfio_pci" "$work/boot" "$work/sys/class/net/enp4s0f1/queues/rx-0"
+printf 'CONFIG_XDP_SOCKETS=y\n' > "$work/boot/config-installer-test"
+device="$work/devices/0000:04:00.1"
+row="enp4s0f1|00:11:22:33:44:55|0000:04:00.1|down|igb"
+
+check_vfio_candidate() {
+  local expected=$1
+  probe_interface "$row" enp4s0f1 igb | python3 -c '
+import json, sys
+fields = sys.stdin.read().strip().split("|")
+selected = json.loads(fields[-2])
+candidates = json.loads("[" + fields[-1] + "]")
+assert selected["tier"] == "vpp_native", fields
+vfio = [item for item in candidates if item["mode"] == "vfio_pci"]
+assert bool(vfio) == (sys.argv[1] == "present"), fields
+' "$expected"
+}
+
+check_vfio_candidate absent
+printf '%s\n' 'PASS: a nonexistent IOMMU path does not qualify VFIO'
+ln -s "$work/sys/kernel/iommu_groups/17" "$device/iommu_group"
+check_vfio_candidate absent
+printf '%s\n' 'PASS: a dangling IOMMU group does not qualify VFIO'
+mkdir -p "$work/sys/kernel/iommu_groups/17"
+check_vfio_candidate absent
+printf '%s\n' 'PASS: a missing IOMMU group device list does not qualify VFIO'
+mkdir "$work/sys/kernel/iommu_groups/17/devices"
+ln -s "$device" "$work/sys/kernel/iommu_groups/17/devices/0000:04:00.1"
+check_vfio_candidate present
+printf '%s\n' 'PASS: a real IOMMU group retains the VFIO candidate and native-first selection'
+
+printf '# CONFIG_XDP_SOCKETS is not set\n' > "$work/boot/config-installer-test"
+probe_interface "$row" enp4s0f1 igb | python3 -c '
+import json, sys
+fields = sys.stdin.read().strip().split("|")
+selected = json.loads(fields[-2])
+candidates = json.loads("[" + fields[-1] + "]")
+assert selected["mode"] == "vfio_pci" and candidates == [selected], fields
+'
+printf '%s\n' 'PASS: a VFIO-only candidate is valid JSON'
+rmdir "$work/sys/module/vfio_pci"
+probe_interface "$row" enp4s0f1 igb | python3 -c '
+import json, sys
+fields = sys.stdin.read().strip().split("|")
+assert fields[5] == "locked" and fields[-2] == "", fields
+assert json.loads("[" + fields[-1] + "]") == [], fields
+'
+printf '%s\n' 'PASS: missing native and VFIO prerequisites leave forwarding locked'

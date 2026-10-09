@@ -261,7 +261,7 @@ candidate_driver() {
 
 probe_interface() {
   local row=$1 name=$2 driver=$3 native= dpdk= dpdk_mode= iommu= reason= candidates= selected= state=locked
-  iommu=$(readlink -f "/sys/class/net/$name/device/iommu_group" 2>/dev/null || true)
+  iommu=$(readlink -e "/sys/class/net/$name/device/iommu_group" 2>/dev/null || true)
   # The patched I354 driver owns board-specific MDIO and switch links.
   # Never offer those functions (or their DSA ports) to an unpatched DPDK PMD.
   if [ -r /etc/ly-route/hardware ] &&
@@ -291,7 +291,8 @@ probe_interface() {
        grep -q '^CONFIG_XDP_SOCKETS=y$' "/boot/config-$(uname -r)" 2>/dev/null; then
     native='{"hook":"af_xdp","mode":"zero_copy","tier":"vpp_native","verified":"hardware_preflight"}'
   fi
-  if [ -n "$iommu" ] && { [ -d /sys/module/vfio_pci ] || modprobe vfio-pci >/dev/null 2>&1; }; then
+  if [ -n "$iommu" ] && [ -d "$iommu/devices" ] &&
+     { [ -d /sys/module/vfio_pci ] || modprobe vfio-pci >/dev/null 2>&1; }; then
     dpdk_mode=vfio_pci
   elif [ -d /sys/module/uio_pci_generic ] || modprobe uio_pci_generic >/dev/null 2>&1; then
     dpdk_mode=uio_pci_generic
@@ -299,7 +300,8 @@ probe_interface() {
   if [ -n "$dpdk_mode" ]; then
     dpdk="{\"hook\":\"dpdk\",\"mode\":\"$dpdk_mode\",\"tier\":\"vpp_dpdk\",\"verified\":\"hardware_preflight\"}"
   fi
-  candidates=$(printf '%s' "$native${native:+,}$dpdk")
+  candidates=$native
+  if [ -n "$dpdk" ]; then candidates="${candidates}${candidates:+,}$dpdk"; fi
   if [ "$driver" = vmxnet3 ] && [ -n "$native" ]; then selected=$native; state=ready; reason=VMXNET3-TAP-bridge-acceptance
   elif [ -n "$native" ]; then selected=$native; state=ready; reason=VPP-native-preflight
   elif [ -n "$dpdk" ]; then selected=$dpdk; state=ready; reason=DPDK-preflight
