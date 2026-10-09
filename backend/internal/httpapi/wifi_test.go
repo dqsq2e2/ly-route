@@ -177,3 +177,76 @@ func TestWiFiValidationAndAuthentication(t *testing.T) {
 		}
 	}
 }
+
+func TestWiFiCustomNetworkPersistsAndLegacyUpdatePreservesIt(t *testing.T) {
+	server, store, cookie := wifiTestServer(t)
+	config := defaultWiFiConfig()
+	config.APCIDR, config.DHCPPoolStart, config.DHCPPoolEnd = "10.42.7.1/24", "10.42.7.20", "10.42.7.90"
+	if response := wifiTestRequest(t, server, cookie, config); response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	config, _, _, _ = server.storedWiFi(context.Background())
+	config.APCIDR, config.DHCPPoolStart, config.DHCPPoolEnd = "", "", ""
+	config.SSID = "legacy-client-save"
+	var applied wifiConfig
+	server.wifi.run = func(_ context.Context, action string, input any) (json.RawMessage, error) {
+		if action == "apply" {
+			applied = input.(wifiConfig)
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	if response := wifiTestRequest(t, server, cookie, config); response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	if applied.APCIDR != "10.42.7.1/24" || applied.DHCPPoolStart != "10.42.7.20" || applied.DHCPPoolEnd != "10.42.7.90" {
+		t.Fatalf("legacy update reset custom network: %+v", applied)
+	}
+	document, _ := store.Config(context.Background(), "wifi", "radio0")
+	if !strings.Contains(string(document.Payload), `"ap_cidr":"10.42.7.1/24"`) {
+		t.Fatal("custom subnet was not persisted")
+	}
+}
+
+func TestWiFiRejectsInvalidPoolWithoutApplyingOrPersisting(t *testing.T) {
+	for _, change := range []func(*wifiConfig){
+		func(c *wifiConfig) { c.APCIDR = "192.168.89.0/24" },
+		func(c *wifiConfig) { c.APCIDR = "::1/64" },
+		func(c *wifiConfig) { c.DHCPPoolStart = "192.168.89.201" },
+		func(c *wifiConfig) { c.DHCPPoolEnd = "192.168.90.200" },
+		func(c *wifiConfig) { c.DHCPPoolStart = "192.168.89.1" },
+		func(c *wifiConfig) { c.DHCPPoolEnd = "192.168.89.255" },
+	} {
+		server, store, cookie := wifiTestServer(t)
+		config := defaultWiFiConfig()
+		change(&config)
+		server.wifi.run = func(context.Context, string, any) (json.RawMessage, error) {
+			t.Fatal("invalid network reached runtime")
+			return nil, nil
+		}
+		if response := wifiTestRequest(t, server, cookie, config); response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid pool accepted: %+v", config)
+		}
+		if _, err := store.Config(context.Background(), "wifi", "radio0"); !errors.Is(err, persistence.ErrNotFound) {
+			t.Fatalf("invalid network persisted: %v", err)
+		}
+	}
+}
+
+func TestWiFiScanFailureDoesNotApplyOrClaimRollback(t *testing.T) {
+	server, _, cookie := wifiTestServer(t)
+	server.wifi.run = func(_ context.Context, action string, _ any) (json.RawMessage, error) {
+		if action != "scan" {
+			t.Fatalf("scan invoked %s", action)
+		}
+		return nil, wifiServiceError(action, []byte(`{"error":{"code":"wifi_scan_aborted"}}`))
+	}
+	response := authenticatedJSONRequest(t, server, http.MethodPost, "/api/v1/wifi/scan", `{}`, cookie)
+	if response.Code != http.StatusBadGateway || strings.Contains(response.Body.String(), "restored") ||
+		!strings.Contains(response.Body.String(), "当前配置未更改") {
+		t.Fatalf("misleading scan error: %s", response.Body.String())
+	}
+	err := wifiServiceError("scan", []byte(`{"error":{"code":"secret-password","message":"private credential"}}`))
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "private") {
+		t.Fatal("helper error leaked untrusted details")
+	}
+}

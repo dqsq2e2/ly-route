@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"regexp"
@@ -24,20 +25,23 @@ import (
 )
 
 type wifiConfig struct {
-	Enabled     bool   `json:"enabled"`
-	Mode        string `json:"mode"`
-	SSID        string `json:"ssid"`
-	Country     string `json:"country"`
-	Band        string `json:"band"`
-	Channel     int    `json:"channel"`
-	Width       int    `json:"width"`
-	Security    string `json:"security"`
-	Hidden      bool   `json:"hidden"`
-	Isolate     bool   `json:"isolate"`
-	MaxClients  int    `json:"max_clients"`
-	Password    string `json:"password,omitempty"`
-	PasswordSet bool   `json:"password_set"`
-	Revision    string `json:"revision,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	Mode          string `json:"mode"`
+	SSID          string `json:"ssid"`
+	Country       string `json:"country"`
+	Band          string `json:"band"`
+	Channel       int    `json:"channel"`
+	Width         int    `json:"width"`
+	Security      string `json:"security"`
+	Hidden        bool   `json:"hidden"`
+	Isolate       bool   `json:"isolate"`
+	MaxClients    int    `json:"max_clients"`
+	APCIDR        string `json:"ap_cidr"`
+	DHCPPoolStart string `json:"dhcp_pool_start"`
+	DHCPPoolEnd   string `json:"dhcp_pool_end"`
+	Password      string `json:"password,omitempty"`
+	PasswordSet   bool   `json:"password_set"`
+	Revision      string `json:"revision,omitempty"`
 }
 
 type wifiAPI struct {
@@ -47,7 +51,8 @@ type wifiAPI struct {
 
 func defaultWiFiConfig() wifiConfig {
 	return wifiConfig{Mode: "ap", SSID: "LyRoute", Band: "2g", Channel: 1,
-		Width: 20, Security: "wpa2", Isolate: true, MaxClients: 32}
+		Width: 20, Security: "wpa2", Isolate: true, MaxClients: 32,
+		APCIDR: "192.168.89.1/24", DHCPPoolStart: "192.168.89.100", DHCPPoolEnd: "192.168.89.200"}
 }
 
 func newWiFiAPI() *wifiAPI {
@@ -65,7 +70,7 @@ func newWiFiAPI() *wifiAPI {
 		output, err := command.Output()
 		if err != nil {
 			// Never return process arguments, stderr or credentials to the client.
-			return nil, fmt.Errorf("wireless service %s failed; previous configuration restored", action)
+			return nil, wifiServiceError(action, output)
 		}
 		if len(output) > 1<<20 || !json.Valid(output) {
 			return nil, errors.New("wireless service returned invalid status")
@@ -74,9 +79,68 @@ func newWiFiAPI() *wifiAPI {
 	}}
 }
 
+func wifiServiceError(action string, output []byte) error {
+	var result struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(output, &result)
+	// Only public, allowlisted failure codes can escape the credential-bearing helper.
+	switch result.Error.Code {
+	case "wifi_subnet_overlap":
+		return errors.New("WiFi 网段与现有接口冲突，请选择其他网段")
+	case "wifi_scan_busy":
+		return errors.New("无线扫描忙，请稍后重试；当前配置未更改")
+	case "wifi_scan_aborted":
+		return errors.New("无线扫描被驱动中止，请稍后重试；当前配置未更改")
+	case "wifi_scan_unsupported":
+		return errors.New("当前无线驱动不支持扫描；当前配置未更改")
+	}
+	if action == "scan" {
+		return errors.New("附近 WiFi 扫描失败；当前配置未更改")
+	}
+	return fmt.Errorf("wireless service %s failed", action)
+}
+
+func (config *wifiConfig) inheritNetwork(previous wifiConfig) {
+	if config.APCIDR == "" {
+		config.APCIDR = previous.APCIDR
+	}
+	if config.DHCPPoolStart == "" {
+		config.DHCPPoolStart = previous.DHCPPoolStart
+	}
+	if config.DHCPPoolEnd == "" {
+		config.DHCPPoolEnd = previous.DHCPPoolEnd
+	}
+}
+
 func (config wifiConfig) validate(password string) error {
 	if config.Mode != "ap" && config.Mode != "client" {
 		return errors.New("mode must be ap or client")
+	}
+	if config.Mode == "ap" {
+		prefix, err := netip.ParsePrefix(config.APCIDR)
+		first, firstErr := netip.ParseAddr(config.DHCPPoolStart)
+		last, lastErr := netip.ParseAddr(config.DHCPPoolEnd)
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() > 30 ||
+			firstErr != nil || lastErr != nil || !first.Is4() || !last.Is4() {
+			return errors.New("WiFi 网关和 DHCP 地址池必须使用有效的 IPv4 地址/掩码")
+		}
+		network := prefix.Masked().Addr()
+		raw := network.As4()
+		broadcast := uint32(raw[0])<<24 | uint32(raw[1])<<16 | uint32(raw[2])<<8 | uint32(raw[3])
+		broadcast |= ^uint32(0) >> prefix.Bits()
+		end := netip.AddrFrom4([4]byte{byte(broadcast >> 24), byte(broadcast >> 16), byte(broadcast >> 8), byte(broadcast)})
+		for _, ip := range []netip.Addr{prefix.Addr(), first, last} {
+			if ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() || ip.IsLinkLocalUnicast() ||
+				ip == network || ip == end || !prefix.Contains(ip) {
+				return errors.New("WiFi 网关和 DHCP 地址池必须位于同一网段，且不能使用网络地址或广播地址")
+			}
+		}
+		if first.Compare(last) > 0 || first.Compare(prefix.Addr()) <= 0 && prefix.Addr().Compare(last) <= 0 {
+			return errors.New("DHCP 起始地址不能大于结束地址，且地址池不能包含 WiFi 网关")
+		}
 	}
 	if !utf8.ValidString(config.SSID) || len(config.SSID) < 1 || len(config.SSID) > 32 ||
 		strings.ContainsAny(config.SSID, "\x00\r\n") {
@@ -195,6 +259,7 @@ func (server *Server) handleWiFi(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusConflict, "wifi_conflict", "wireless configuration changed; reload before saving")
 			return
 		}
+		desired.inheritNetwork(config)
 		newPassword := desired.Password
 		if newPassword == "" {
 			newPassword = password
@@ -232,7 +297,7 @@ func (server *Server) handleWiFi(w http.ResponseWriter, r *http.Request) {
 			}
 			config.Password = password
 			_, runtimeErr := api.run(ctx, "apply", config)
-			message := "wireless service rejected the configuration; previous configuration restored"
+			message := err.Error() + "; previous configuration restored"
 			if rollbackErr != nil || runtimeErr != nil {
 				message = "wireless apply and rollback failed; check service state before retrying"
 			}

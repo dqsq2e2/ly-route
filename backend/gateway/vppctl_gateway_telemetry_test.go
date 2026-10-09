@@ -117,10 +117,14 @@ func TestVPPCTLGatewayTelemetryIncludesOnlyEnabledBusinessWiFi(t *testing.T) {
 		enabled bool
 		mode    string
 		want    int
+		cidr    string
+		ip      string
 	}{
-		{name: "business AP", enabled: true, mode: "ap", want: 2},
-		{name: "disabled AP", enabled: false, mode: "ap", want: 1},
-		{name: "management client", enabled: true, mode: "client", want: 1},
+		{name: "business AP legacy defaults", enabled: true, mode: "ap", want: 2, ip: "192.168.89.101"},
+		{name: "business AP custom subnet", enabled: true, mode: "ap", want: 2, cidr: "10.42.7.1/24", ip: "10.42.7.20"},
+		{name: "old subnet excluded after change", enabled: true, mode: "ap", want: 1, cidr: "10.42.7.1/24", ip: "192.168.89.101"},
+		{name: "disabled AP", enabled: false, mode: "ap", want: 1, ip: "192.168.89.101"},
+		{name: "management client", enabled: true, mode: "client", want: 1, ip: "192.168.89.101"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := memoryGatewayTelemetryConfig{documents: map[string][]persistence.ConfigDocument{
@@ -128,7 +132,7 @@ func TestVPPCTLGatewayTelemetryIncludesOnlyEnabledBusinessWiFi(t *testing.T) {
 					"id": "lan0", "system_name": "enp0s20f3", "gateway_role": "lan", "cidr": "192.168.88.66/24",
 				})},
 				"wifi": {telemetryConfigDocument(t, "wifi", "radio0", map[string]any{
-					"enabled": test.enabled, "mode": test.mode,
+					"enabled": test.enabled, "mode": test.mode, "ap_cidr": test.cidr,
 				})},
 			}}
 			collector := newVPPCTLGatewayTelemetry(store, "vppctl", func() time.Time { return now })
@@ -136,11 +140,11 @@ func TestVPPCTLGatewayTelemetryIncludesOnlyEnabledBusinessWiFi(t *testing.T) {
 				switch fmt.Sprint(args) {
 				case "[show ip neighbors]":
 					return "1.0 192.168.88.120 D 00:e0:4c:68:02:10 lyroute-enp0s20f3\n" +
-						"2.0 192.168.89.101 D e6:22:fe:ee:3c:6c lywifi-ap\n" +
+						"2.0 " + test.ip + " D e6:22:fe:ee:3c:6c lywifi-ap\n" +
 						"3.0 192.168.1.1 D 82:5d:fc:a7:14:f1 lyroute-enp4s0f0\n" +
 						"4.0 198.19.255.222 D 02:fe:9f:33:c4:13 lydns86c2bf\n", nil
 				case "[show nat44 sessions]":
-					return "i2o 192.168.89.101 proto TCP port 50001 fib 0\n" +
+					return "i2o " + test.ip + " proto TCP port 50001 fib 0\n" +
 						"external host 183.2.172.177:443\n" +
 						"i2o 192.168.88.120 proto TCP port 50002 fib 0\n" +
 						"external host 183.2.172.177:443\n" +
@@ -154,13 +158,21 @@ func TestVPPCTLGatewayTelemetryIncludesOnlyEnabledBusinessWiFi(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(snapshot.Neighbors) != test.want || len(snapshot.Connections) != test.want {
+			wantNeighbors := 1
+			if test.enabled && test.mode == "ap" {
+				wantNeighbors = 2
+			}
+			if len(snapshot.Neighbors) != wantNeighbors || len(snapshot.Connections) != test.want {
 				t.Fatalf("neighbors=%#v connections=%#v; want %d business clients", snapshot.Neighbors, snapshot.Connections, test.want)
 			}
-			if snapshot.Neighbors[0].IP != "192.168.88.120" {
+			neighbors := map[string]bool{}
+			for _, neighbor := range snapshot.Neighbors {
+				neighbors[neighbor.IP] = true
+			}
+			if !neighbors["192.168.88.120"] {
 				t.Fatalf("wired neighbor lost: %#v", snapshot.Neighbors)
 			}
-			if test.want == 2 && snapshot.Neighbors[1].IP != "192.168.89.101" {
+			if test.want == 2 && !neighbors[test.ip] {
 				t.Fatalf("Wi-Fi neighbor missing: %#v", snapshot.Neighbors)
 			}
 		})

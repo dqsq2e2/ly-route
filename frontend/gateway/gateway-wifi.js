@@ -29,7 +29,7 @@
       const values = channels().map((item) => [item.channel, `${item.channel} (${item.frequency} MHz)`]);
       if (!values.some(([value]) => value === config.channel)) values.unshift([config.channel, `${config.channel} (当前监管域不可用)`]);
       root.querySelector('[data-wifi-content]').innerHTML = `<form data-wifi-form class="wifi-form">
-        ${field('enabled', '无线电', `<input type="checkbox" name="enabled" ${config.enabled ? 'checked' : ''}>`)}
+        ${field('enabled', '启用 WiFi', `<input type="checkbox" name="enabled" ${config.enabled ? 'checked' : ''}>`)}
         ${select('mode', '工作模式', [['ap', '业务 AP'], ['client', '无线管理客户端']])}
         ${field('ssid', 'SSID', `<input name="ssid" maxlength="32" value="${escape(config.ssid)}" required autocomplete="off">`)}
         ${field('password', config.password_set ? '更换密码' : '密码', `<input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="63" ${config.password_set ? '' : (config.enabled ? 'required' : '')}>`)}
@@ -42,6 +42,10 @@
           ${field('hidden', '隐藏 SSID', `<input name="hidden" type="checkbox" ${config.hidden ? 'checked' : ''}>`)}
           ${field('isolate', '客户端隔离', `<input name="isolate" type="checkbox" ${config.isolate ? 'checked' : ''}>`)}
           ${field('max_clients', '客户端上限', `<input name="max_clients" type="number" min="1" max="128" value="${config.max_clients}" required>`)}
+          ${field('ap_cidr', '网关 IP/掩码', `<input name="ap_cidr" value="${escape(config.ap_cidr || '192.168.89.1/24')}" required placeholder="192.168.89.1/24">`)}
+          ${field('dhcp_pool_start', 'DHCP 起始地址', `<input name="dhcp_pool_start" value="${escape(config.dhcp_pool_start || '192.168.89.100')}" required>`)}
+          ${field('dhcp_pool_end', 'DHCP 结束地址', `<input name="dhcp_pool_end" value="${escape(config.dhcp_pool_end || '192.168.89.200')}" required>`)}
+          <p>网段需与其他接口不同；修改后无线客户端需重新获取地址。</p>
         </div>
         <div class="wifi-network-state"><span>接入网络</span><strong data-wifi-network></strong><span>网关 / DNS</span><strong data-wifi-gateway></strong><span>业务转发</span><strong data-wifi-business></strong><span>生效监管域</span><strong data-wifi-regulatory></strong></div>
         <footer><button type="button" data-wifi-cancel>取消</button><button type="submit" data-wifi-save>保存</button></footer>
@@ -59,7 +63,8 @@
       const network = root.querySelector('[data-wifi-network]');
       if (network) {
         network.textContent = config?.mode === 'ap' ? '业务 LAN' : '独立管理网';
-        root.querySelector('[data-wifi-gateway]').textContent = config?.mode === 'ap' ? '192.168.89.1' : '--';
+        root.querySelector('[data-wifi-gateway]').textContent = config?.mode === 'ap'
+          ? (status?.business?.gateway || (config.ap_cidr || '192.168.89.1/24').split('/')[0]) : '--';
         root.querySelector('[data-wifi-business]').textContent = businessNames[status?.business?.state] || '不可用';
         root.querySelector('[data-wifi-regulatory]').textContent = status?.regulatory?.active || '--';
       }
@@ -122,9 +127,11 @@
         const data = await apiJSON('/api/v1/wifi/scan', { method: 'POST', body: '{}' });
         if (current !== generation || !root) return;
         const networks = data.networks || [];
-        root.querySelector('[data-wifi-networks]').innerHTML = networks.length
+        const scope = data.scope === 'current_channel'
+          ? `<p>AP 运行中仅扫描当前信道（${escape(data.frequency)} MHz），以保持无线连接。</p>` : '';
+        root.querySelector('[data-wifi-networks]').innerHTML = scope + (networks.length
           ? `<div class="wifi-table-wrap"><table><thead><tr><th>SSID</th><th>BSSID</th><th>信号</th><th>频率</th><th>安全</th></tr></thead><tbody>${networks.map((item) =>
-            `<tr><td>${escape(item.ssid || '隐藏网络')}</td><td>${escape(item.bssid)}</td><td>${escape(item.signal)} dBm</td><td>${escape(item.frequency)} MHz</td><td>${escape(item.security)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">未发现网络</p>';
+            `<tr><td>${escape(item.ssid || '隐藏网络')}</td><td>${escape(item.bssid)}</td><td>${escape(item.signal)} dBm</td><td>${escape(item.frequency)} MHz</td><td>${escape(item.security)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">未发现网络</p>');
       } catch (failure) { if (current === generation) error(failure.message); }
       finally { if (current === generation) { busy = false; update(); } }
     }

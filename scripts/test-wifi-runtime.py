@@ -39,6 +39,126 @@ class WiFiTests(unittest.TestCase):
             {"name": "domain-name-servers", "data": "192.168.89.1"},
         ])
 
+    def test_custom_subnet_drives_dhcp_gateway_pool_and_separate_leases(self):
+        self.config.update(ap_cidr="10.42.7.1/24", dhcp_pool_start="10.42.7.20", dhcp_pool_end="10.42.7.90")
+        config = wifi.ap_dhcp_config(self.config)["Dhcp4"]
+        subnet = config["subnet4"][0]
+        self.assertEqual(subnet["subnet"], "10.42.7.0/24")
+        self.assertEqual(subnet["pools"], [{"pool": "10.42.7.20 - 10.42.7.90"}])
+        self.assertEqual(subnet["option-data"], [
+            {"name": "routers", "data": "10.42.7.1"},
+            {"name": "domain-name-servers", "data": "10.42.7.1"},
+        ])
+        self.assertNotEqual(config["lease-database"]["name"], str(wifi.RUN / "leases.csv"))
+
+    def test_custom_subnet_vpp_and_lcp_cleanup_use_owned_previous_subnet(self):
+        self.config.update(ap_cidr="10.42.7.1/24", dhcp_pool_start="10.42.7.20", dhcp_pool_end="10.42.7.90")
+        def answer(*args, **kwargs):
+            if "create tap" in str(args):
+                return "lywifi-ap\n"
+            if args == ("vppctl", "show ly-route dns-intercept"):
+                return "enabled 1"
+            return ""
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(wifi, "RUN", Path(directory)), patch.object(wifi, "NETWORK", Path(directory) / "network"), \
+                    patch.object(wifi, "command", side_effect=answer) as command:
+                wifi.start_business("wlp1s0", self.config)
+                wifi.stop_business("wlp1s0")
+            calls = [call.args for call in command.call_args_list]
+        self.assertIn(("vppctl", "set interface ip address lywifi-ap 10.42.7.1/24"), calls)
+        self.assertIn(("ip", "address", "replace", "10.42.7.1/24", "dev", "lywifi-host"), calls)
+        self.assertIn(("vppctl", "ip route add table 100 10.42.7.0/24 via lywifi-ap"), calls)
+        self.assertIn(("vppctl", "ip route del table 100 10.42.7.0/24 via lywifi-ap"), calls)
+        self.assertNotIn(("vppctl", "ip route del table 100 192.168.89.0/24 via lywifi-ap"), calls)
+
+    def test_invalid_custom_network_is_rejected_before_any_operation(self):
+        for change in (
+            {"ap_cidr": "10.42.7.0/24"}, {"ap_cidr": "::1/64"},
+            {"dhcp_pool_start": "192.168.89.201"}, {"dhcp_pool_end": "10.1.1.2"},
+            {"dhcp_pool_start": "192.168.89.1"}, {"dhcp_pool_end": "192.168.89.255"},
+        ):
+            config = dict(self.config, **change)
+            with self.subTest(change=change), patch.object(wifi, "command") as command:
+                with self.assertRaises(ValueError):
+                    wifi.apply(config)
+                command.assert_not_called()
+
+    def test_overlap_does_not_write_config_or_restart_ap(self):
+        links = [{"ifname": "enp0s20f2", "addr_info": [
+            {"family": "inet", "local": "192.168.89.254", "prefixlen": 24}]}]
+        with patch.object(wifi, "radio", return_value=("wlp1s0", "phy0")), \
+                patch.object(wifi.shutil, "which", return_value="tool"), \
+                patch.object(wifi, "prepare_regulatory"), \
+                patch.object(wifi, "command", side_effect=lambda *args, **kwargs:
+                             json.dumps(links) if args[0] == "ip" else "{}") as command, \
+                patch.object(wifi, "atomic") as atomic:
+            with self.assertRaises(wifi.WirelessError) as failure:
+                wifi.apply(self.config)
+            self.assertEqual(failure.exception.code, "wifi_subnet_overlap")
+            atomic.assert_not_called()
+            self.assertFalse(any(call.args[0] == "systemctl" for call in command.call_args_list))
+
+    def test_ap_scan_uses_distinct_managed_vif_and_current_channel_without_restart(self):
+        text = ("BSS aa:bb:cc:dd:ee:ff(on lywifi-scan)\n"
+                "\tfreq: 5745\n\tsignal: -44.50 dBm\n\tSSID: nearby\n\tRSN:\n"
+                "\tAuthentication suites: PSK SAE\n")
+        def answer(*args, **kwargs):
+            if args[0] == "ip" and "-j" in args:
+                return '[{"flags":["UP"]}]'
+            if args[-1] == "info":
+                return "type AP\nchannel 149 (5745 MHz), width: 80 MHz\n"
+            if "scan" in args:
+                return text
+            return ""
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(wifi, "NET", Path(directory)), \
+                    patch.object(wifi, "radio", return_value=("wlp1s0", "phy0")), \
+                    patch.object(wifi, "command", side_effect=answer) as command:
+                result = wifi.scan_radio()
+        self.assertEqual(result["scope"], "current_channel")
+        self.assertEqual(result["frequency"], 5745)
+        self.assertEqual(result["networks"][0]["security"], "mixed")
+        calls = [call.args for call in command.call_args_list]
+        self.assertIn(("iw", "dev", "lywifi-scan", "scan", "freq", "5745", "passive"), calls)
+        self.assertIn(("iw", "dev", "lywifi-scan", "del"), calls)
+        self.assertFalse(any(call[0] == "systemctl" for call in calls))
+        self.assertFalse(any(call[:6] == ("ip", "link", "set", "dev", "wlp1s0", "down") for call in calls))
+        created = next(call for call in calls if "add" in call)
+        self.assertEqual(created[-2], "addr")
+        self.assertTrue(created[-1].startswith("02:"))
+
+    def test_aborted_scan_is_failure_and_temp_interface_is_cleaned(self):
+        def answer(*args, **kwargs):
+            if args[0] == "ip" and "-j" in args:
+                return '[{"flags":["UP"]}]'
+            if args[-1] == "info":
+                return "type AP\nchannel 149 (5745 MHz)\n"
+            return "scan aborted!" if "scan" in args else ""
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(wifi, "NET", Path(directory)), \
+                    patch.object(wifi, "radio", return_value=("wlp1s0", "phy0")), \
+                    patch.object(wifi, "command", side_effect=answer) as command:
+                with self.assertRaises(wifi.WirelessError) as failure:
+                    wifi.scan_radio()
+                self.assertEqual(failure.exception.code, "wifi_scan_aborted")
+                self.assertEqual(command.call_args_list[-1].args, ("iw", "dev", "lywifi-scan", "del"))
+
+    def test_scan_preserves_occupied_interface_and_down_client_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            occupied = Path(directory) / wifi.SCAN_INTERFACE
+            occupied.mkdir()
+            with patch.object(wifi, "NET", Path(directory)), \
+                    patch.object(wifi, "radio", return_value=("wlp1s0", "phy0")), \
+                    patch.object(wifi, "command", side_effect=['[{"flags":["UP"]}]', "type AP\n"]) as command:
+                with self.assertRaises(wifi.WirelessError):
+                    wifi.scan_radio()
+                self.assertEqual(command.call_count, 2)
+            with patch.object(wifi, "radio", return_value=("wlp1s0", "phy0")), \
+                    patch.object(wifi, "command", side_effect=['[{"flags":[]}]', "type managed\n", "", "", ""]) as command:
+                self.assertEqual(wifi.scan_radio()["scope"], "all_channels")
+                self.assertEqual(command.call_args_list[-1].args,
+                                 ("ip", "link", "set", "dev", "wlp1s0", "down"))
+
     def test_business_ap_uses_vpp_tap_not_linux_routing(self):
         def answer(*args, **kwargs):
             if args == ("vppctl", "create tap id 3800 if-name lywifi-ap hw-addr 02:4c:59:89:00:01 host-if-name lywifi-data host-mtu-size 1500"):

@@ -352,9 +352,15 @@ func (collector *vppctlGatewayTelemetry) logicalEgressConfiguration(ctx context.
 	for _, payload := range wifiPayloads {
 		enabled, _ := payload["enabled"].(bool)
 		if enabled && telemetryString(payload, "mode") == "ap" {
-			// The hardware helper owns this fixed business AP gateway, outside wired interface config.
+			// Wi-Fi business addresses are configured outside the wired interface owner.
 			lanInterfaces["lywifi-ap"] = struct{}{}
-			lanPrefixes = append(lanPrefixes, netip.MustParsePrefix("192.168.89.0/24"))
+			cidr := telemetryString(payload, "ap_cidr")
+			if cidr == "" {
+				cidr = "192.168.89.1/24"
+			}
+			if prefix, parseErr := netip.ParsePrefix(cidr); parseErr == nil && prefix.Addr().Is4() {
+				lanPrefixes = append(lanPrefixes, prefix.Masked())
+			}
 		}
 	}
 

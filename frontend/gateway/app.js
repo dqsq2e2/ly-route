@@ -669,7 +669,7 @@ function renderManagementNetworkEditor() {
 		.map((row) => ({ value: row._systemId || row[0], label: row[0] }));
 	if (iface && !options.some((option) => option.value === iface || option.label === iface)) options.unshift({ value: iface, label: iface });
 	const interfaceOptions = options.map(({ value, label }) => `<option value="${escapeAttr(value)}" ${value === iface || label === iface ? 'selected' : ''}>${safeText(label)}</option>`).join('');
-	return `<section class="config-op management-network-op"><div class="config-op-copy"><strong>管理口设置</strong></div><div class="management-network-form"><label>管理接口<select data-management-interface>${interfaceOptions}</select></label><label>IP/掩码<input data-management-cidr value="${safeText(cidr)}"></label><label>网关<input data-management-gateway value="${safeText(gateway)}"></label><button class="primary" type="button" data-action="management-save">保存管理口</button></div></section>`;
+	return `<section class="config-op management-network-op"><div class="config-op-copy"><strong>管理口设置</strong><span>上游网关用于本机管理网络；DHCP 客户端的网关为管理口 IP。</span></div><div class="management-network-form"><label>管理接口<select data-management-interface>${interfaceOptions}</select></label><label>IP/掩码<input data-management-cidr value="${safeText(cidr)}"></label><label>本机上游网关<input data-management-gateway value="${safeText(gateway)}"></label><button class="primary" type="button" data-action="management-save">保存管理口</button></div></section>`;
 }
 
 function renderFirmwareOperationsHtml() {
