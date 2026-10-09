@@ -3970,8 +3970,12 @@ func (server *Server) saveManagementNetwork(ctx context.Context, payload map[str
 	if value := strings.TrimSpace(nonEmpty(stringField(payload, "cidr"), stringField(payload, "ip_cidr"))); value != "" {
 		item["cidr"] = value
 	}
-	if value := strings.TrimSpace(stringField(payload, "gateway")); value != "" {
-		item["gateway"] = value
+	if value, present := payload["gateway"]; present {
+		gateway, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("gateway must be a string; use an empty string for no upstream gateway")
+		}
+		item["gateway"] = strings.TrimSpace(gateway)
 	}
 	if value := strings.TrimSpace(stringField(payload, "dhcp_pool_start")); value != "" {
 		item["dhcp_pool_start"] = value
