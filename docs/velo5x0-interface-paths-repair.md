@@ -76,16 +76,46 @@ error. A subsequent DHCP client rebind restored the actual WAN address
 192.168.1.221/24, and VPP ICMP to 223.5.5.5 passed 3/3.
 These manual recovery observations do not close warm-restart stability.
 
-The Windows GE2 client currently retains 169.254.53.39 and its DHCP renew
-commands timed out. Resetting that specific adapter was denied by Windows
-permissions. A GE2 cable reconnect was requested, keeping GE1 and the existing
-Wi-Fi connection untouched. No GE2 client HTTPS success is claimed for this
-repair until the independent client lease and traffic are verified again.
-The computer was not instructed to connect to the appliance Wi-Fi.
+The subsequent Windows GE2 APIPA failure was localized to the computer side.
+Before its reboot, the router reported 100 Mbps while Windows reported 1 Gbps.
+A marked probe sent from the GE2 USB adapter did not reach any appliance port;
+the corresponding GE1 control probe reached enp0s20f2. GE2 RX counters did not
+advance and Kea saw no new request during capture. A separate Windows onboard
+NIC capture-open call also hung. These observations do not identify a specific
+Windows driver and do not establish another AF_XDP warm-RX failure.
+
+The user rebooted the computer and reported recovery. Independent verification
+then passed without replacing or recreating the appliance's GE2 attachment:
+
+- The same client MAC 00:e0:4c:68:02:10 received 192.168.88.120/24.
+  Its Windows interface index changed from 13 to 15; the adapter GUID and MAC
+  were used to identify it again instead of assuming a stable index.
+- A real DHCP renewal completed with exit 0. Captured REQUEST and ACK shared
+  transaction a1f9aaaf; ACK option 3 and server identifier both contained
+  192.168.88.66. The allocated address was 192.168.88.120.
+- Windows DhcpDefaultGateway contains only 192.168.88.66. Its separate manual
+  DefaultGateway value retains 192.168.1.2 and 192.168.100.1; those addresses
+  are not supplied by this DHCP ACK. The preferred GE2 default route uses .66.
+- With both the source address and Windows egress index explicitly bound to
+  GE2, DNS through 192.168.88.66 resolved www.baidu.com to 183.2.172.177, and
+  certificate-verified Baidu HTTPS returned HTTP/1.1 200 OK (29935 bytes).
+  This test did not rely on the computer's Wi-Fi/default route.
+- GE2 again negotiated 1000 Mbps/full duplex. Its XDP program remained 211;
+  SFP1 remained 239. Both hardware readbacks report admin-up zero-copy with
+  matching Linux netdev identities and no device error. Both received and
+  transmitted physical traffic. WAN DHCP retains 192.168.1.221/24 and VPP
+  public ICMP to 223.5.5.5 passed 3/3.
+
+Current physical GE2 native-path DHCP and HTTPS acceptance therefore passes.
+The DPDK/VFIO hardware prerequisite remains blocked as described above;
+this successful native test does not qualify DPDK, sustained throughput or
+LAN1-8. No appliance source change, deployment or appliance reboot was needed
+for this computer-side recovery. The prepared administrator adapter-reset
+script was not executed. The computer's Wi-Fi connection was not changed.
 
 Management SSH/HTTPS and both DHCP services remain active. Wi-Fi configuration
 and hostapd hashes match the prior values, and the user's selected password
-and derived PSK are unchanged.
+and derived PSK are unchanged. The final failed-systemd-unit list is empty.
 
 ## Deployment
 
