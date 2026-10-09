@@ -19,12 +19,15 @@ $repo_root/scripts/build-auto-install-iso.sh
 $repo_root/scripts/rootfs-runtime-smoke.sh
 $repo_root/packaging/runtime-boundaries/gateway.sh
 $repo_root/scripts/test-firstboot-env-migration.sh
+$repo_root/scripts/test-management-network.py
 $repo_root/scripts/test-vpp-native-selection.sh
 $repo_root/scripts/test-vpp-tuning.sh
 $repo_root/scripts/test-dns-ipset-sync.sh
 $repo_root/packaging/rootfs-overlay/etc/systemd/network/10-ethernet-dhcp.network
 $repo_root/packaging/rootfs-overlay/etc/systemd/system/ly-route-firstboot.service
 $repo_root/packaging/rootfs-overlay/usr/lib/ly-route/migrate-control-env.sh
+$repo_root/packaging/rootfs-overlay/usr/lib/ly-route/management-network.py
+$repo_root/packaging/rootfs-overlay/etc/systemd/system/kea-dhcp4-management-server.service
 $repo_root/packaging/rootfs-overlay/etc/systemd/system/ly-route-control-api.service
 $repo_root/packaging/rootfs-overlay/etc/systemd/system/ly-route-runtime-check.service
 $repo_root/packaging/rootfs-overlay/etc/systemd/system/ly-route-vpp-apply.service
@@ -99,6 +102,7 @@ sh -n "$repo_root/packaging/rootfs-overlay/usr/lib/ly-route/runtime-check.sh"
 case "$(uname -s)" in
   Linux*)
     "$repo_root/scripts/test-firstboot-env-migration.sh"
+    "$python_bin" "$repo_root/scripts/test-management-network.py"
     "$repo_root/scripts/test-dns-ipset-sync.sh"
     "$repo_root/scripts/test-vpp-tuning.sh"
     ;;
@@ -141,15 +145,15 @@ if ! grep -q '"active_path": "dataplane_locked"' "$repo_root/packaging/rootfs-ov
   exit 1
 fi
 
-if ! grep -q '"interfaces": \["eth0"\]' "$repo_root/packaging/rootfs-overlay/etc/kea/kea-dhcp4.conf"; then
-  echo "factory Kea config does not bind DHCP to eth0" >&2
-  exit 1
-fi
+"$python_bin" - "$repo_root/packaging/rootfs-overlay/etc/kea/kea-dhcp4.conf" <<'PY'
+import json
+import sys
 
-if ! grep -q '192.168.88.100 - 192.168.88.199' "$repo_root/packaging/rootfs-overlay/etc/kea/kea-dhcp4.conf"; then
-  echo "factory Kea config does not expose the default LAN DHCP pool" >&2
-  exit 1
-fi
+with open(sys.argv[1], encoding="utf-8") as source:
+    dhcp = json.load(source)["Dhcp4"]
+if dhcp.get("interfaces-config", {}).get("interfaces") != [] or dhcp.get("subnet4") != []:
+    sys.exit("factory business DHCP must remain unassigned; firstboot provisions management DHCP separately")
+PY
 
 if ! grep -q 'build-runtime-debs.sh smartdns' "$repo_root/.github/workflows/gateway-release.yml" || ! grep -q 'build-runtime-debs.sh xray' "$repo_root/.github/workflows/gateway-release.yml"; then
   echo "GitHub x86 firmware workflow does not package SmartDNS and xray runtime services" >&2
@@ -198,7 +202,12 @@ if ! grep -q 'ly-route-control-api.service' "$repo_root/scripts/build-rootfs.sh"
 fi
 
 if ! grep -q 'kea-dhcp4-server.service' "$repo_root/scripts/build-rootfs.sh"; then
-  echo "factory LAN DHCP service is not enabled by the rootfs builder" >&2
+  echo "business DHCP service is not enabled by the rootfs builder" >&2
+  exit 1
+fi
+
+if ! grep -q 'kea-dhcp4-management-server.service' "$repo_root/scripts/build-rootfs.sh"; then
+  echo "independent management DHCP service is not enabled by the rootfs builder" >&2
   exit 1
 fi
 

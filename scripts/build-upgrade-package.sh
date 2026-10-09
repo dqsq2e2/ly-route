@@ -175,6 +175,11 @@ capabilities_hash=$(sha256sum "$package_root/opt/ly-route/admin/capabilities.jso
 index_hash=$(sha256sum "$package_root/opt/ly-route/admin/index.html" | cut -d' ' -f1)
 shell_hash=$(sha256sum "$package_root/opt/ly-route/admin/shell.js" | cut -d' ' -f1)
 styles_hash=$(sha256sum "$package_root/opt/ly-route/admin/styles.css" | cut -d' ' -f1)
+case "$product" in
+  gateway) product_stylesheet=commercial.css ;;
+  orchestrator) product_stylesheet=product.css ;;
+esac
+product_styles_hash=$(sha256sum "$package_root/opt/ly-route/admin/$product_stylesheet" | cut -d' ' -f1)
 nginx_hash=$(sha256sum "$package_root/etc/nginx/conf.d/ly-route-admin.conf" | cut -d' ' -f1)
 service_hash=$(sha256sum "$service" | cut -d' ' -f1)
 profile_hash=$(sha256sum "$package_root/etc/ly-route/product-manifest.json" | cut -d' ' -f1)
@@ -187,6 +192,7 @@ $capabilities_hash  opt/ly-route/admin/capabilities.json
 $index_hash  opt/ly-route/admin/index.html
 $shell_hash  opt/ly-route/admin/shell.js
 $styles_hash  opt/ly-route/admin/styles.css
+$product_styles_hash  opt/ly-route/admin/$product_stylesheet
 $nginx_hash  etc/nginx/conf.d/ly-route-admin.conf
 $service_hash  etc/systemd/system/ly-route-control-api.service
 $profile_hash  etc/ly-route/product-manifest.json
@@ -204,11 +210,11 @@ fi
 node - "$package_root/manifest.json" "$PRODUCT_BUILD_PROFILE" "$product" "$suite" "$arch" \
   "$source_commit" "$created_at" "$control_hash" "$vpp_apply_hash" "$app_hash" \
   "$capabilities_hash" "$index_hash" "$shell_hash" "$styles_hash" "$nginx_hash" \
-  "$service_hash" "$profile_hash" "$artifact_manifest_hash" <<'NODE'
+  "$service_hash" "$profile_hash" "$artifact_manifest_hash" "$product_stylesheet" "$product_styles_hash" <<'NODE'
 const { readFileSync, writeFileSync } = require("node:fs");
 const [output, profilePath, product, suite, arch, commit, createdAt,
   controlHash, vppHash, appHash, capabilitiesHash, indexHash, shellHash, stylesHash,
-  nginxHash, serviceHash, profileHash, artifactManifestHash] = process.argv.slice(2);
+  nginxHash, serviceHash, profileHash, artifactManifestHash, productStylesheet, productStylesHash] = process.argv.slice(2);
 const profile = JSON.parse(readFileSync(profilePath, "utf8"));
 const manifest = {
   package_type: "ly-route-upgrade",
@@ -227,6 +233,7 @@ const manifest = {
     "opt/ly-route/admin/index.html": indexHash,
     "opt/ly-route/admin/shell.js": shellHash,
     "opt/ly-route/admin/styles.css": stylesHash,
+    [`opt/ly-route/admin/${productStylesheet}`]: productStylesHash,
     "etc/nginx/conf.d/ly-route-admin.conf": nginxHash,
     "etc/systemd/system/ly-route-control-api.service": serviceHash,
     "etc/ly-route/product-manifest.json": profileHash,

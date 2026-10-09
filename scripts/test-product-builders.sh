@@ -93,6 +93,13 @@ validate_product_payload() {
     "$extract_dir/opt/ly-route/admin/capabilities.json"
   grep -F "window.LY_ROUTE_PRODUCT_ENTRYPOINT = \"$product\";" \
     "$extract_dir/opt/ly-route/admin/app.js" >/dev/null
+  case "$product" in
+    gateway) product_stylesheet=commercial.css ;;
+    orchestrator) product_stylesheet=product.css ;;
+  esac
+  cmp "$tmp/bundle-$product/$product_stylesheet" \
+    "$extract_dir/opt/ly-route/admin/$product_stylesheet"
+  grep -F "./$product_stylesheet" "$extract_dir/opt/ly-route/admin/index.html" >/dev/null
   grep -F "LY_ROUTE_PRODUCT_PROFILE=/etc/ly-route/product-manifest.json" \
     "$extract_dir/etc/systemd/system/ly-route-control-api.service" >/dev/null
   grep -F "LY_ROUTE_DB_PATH=/var/lib/ly-route/$product/ly-route.db" \
@@ -140,6 +147,8 @@ validate_upgrade_manifest() {
   profile="$repo_root/packaging/build-profiles/$product.json"
   node - "$root/manifest.json" "$profile" "$product" "$arch" <<'NODE'
 const { readFileSync } = require("node:fs");
+const { createHash } = require("node:crypto");
+const { dirname, join } = require("node:path");
 const [manifestPath, profilePath, product, arch] = process.argv.slice(2);
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const profile = JSON.parse(readFileSync(profilePath, "utf8"));
@@ -162,8 +171,14 @@ const expectedChecksums = [
   "usr/lib/ly-route/vpp-apply",
   "usr/share/ly-route/artifact-manifest.json",
 ];
+expectedChecksums.push(`opt/ly-route/admin/${product === "gateway" ? "commercial.css" : "product.css"}`);
+expectedChecksums.sort();
 if (JSON.stringify(Object.keys(manifest.checksums).sort()) !== JSON.stringify(expectedChecksums)) {
   throw new Error(`upgrade checksum allowlist mismatch for ${product}/${arch}`);
+}
+for (const [path, expected] of Object.entries(manifest.checksums)) {
+  const actual = createHash("sha256").update(readFileSync(join(dirname(manifestPath), path))).digest("hex");
+  if (actual !== expected) throw new Error(`upgrade checksum mismatch: ${path}`);
 }
 NODE
   (cd "$root" && sha256sum -c checksums.sha256 >/dev/null)
@@ -201,6 +216,25 @@ expect_rejection "wrong rootfs frontend bundle" "Frontend bundle product mismatc
 expect_rejection "wrong upgrade frontend bundle" "Frontend bundle product mismatch: expected gateway" "$tmp/reject-upgrade" \
   env $common_upgrade_env LY_ROUTE_CONTROL_BINARY="$tmp/control-gateway" LY_ROUTE_CONTROL_PRODUCT=gateway LY_ROUTE_VPP_APPLY_BINARY="$tmp/vpp-apply" \
   "$upgrade_builder" --product gateway --frontend-bundle "$tmp/bundle-orchestrator" --out "$tmp/reject-upgrade"
+
+for product in gateway orchestrator; do
+  case "$product" in
+    gateway) product_stylesheet=commercial.css ;;
+    orchestrator) product_stylesheet=product.css ;;
+  esac
+  cp -a "$tmp/bundle-$product" "$tmp/missing-styles-$product"
+  rm "$tmp/missing-styles-$product/$product_stylesheet"
+  cp -a "$tmp/bundle-$product" "$tmp/extra-file-$product"
+  printf 'unexpected\n' >"$tmp/extra-file-$product/unexpected.css"
+  for invalid_bundle in missing-styles extra-file; do
+    expect_rejection "$invalid_bundle rootfs $product bundle" "Frontend bundle product mismatch: expected $product" "$tmp/reject-rootfs" \
+      env $common_rootfs_env LY_ROUTE_CONTROL_BINARY="$tmp/control-$product" LY_ROUTE_CONTROL_PRODUCT="$product" \
+      "$rootfs_builder" --product "$product" --frontend-bundle "$tmp/$invalid_bundle-$product" --out "$tmp/reject-rootfs"
+    expect_rejection "$invalid_bundle upgrade $product bundle" "Frontend bundle product mismatch: expected $product" "$tmp/reject-upgrade" \
+      env $common_upgrade_env LY_ROUTE_CONTROL_BINARY="$tmp/control-$product" LY_ROUTE_CONTROL_PRODUCT="$product" LY_ROUTE_VPP_APPLY_BINARY="$tmp/vpp-apply" \
+      "$upgrade_builder" --product "$product" --frontend-bundle "$tmp/$invalid_bundle-$product" --out "$tmp/reject-upgrade"
+  done
+done
 
 cp "$repo_root/packaging/product-profiles/gateway.json" "$tmp/tampered-profile.json"
 node - "$tmp/tampered-profile.json" <<'NODE'

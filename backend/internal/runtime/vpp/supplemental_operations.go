@@ -168,8 +168,14 @@ func ValidateSupplementalReadback(plan Plan, owner SupplementalOwner, actual []S
 
 func supplementalOperationOwner(operation Operation) SupplementalOwner {
 	switch operation.Name {
+	case "vpp.interface.address":
+		if assignment, ok := operation.Payload.(AddressAssignment); ok && assignment.Mode == "dhcp4" {
+			return SupplementalInterfaces
+		}
 	case "vpp.dataplane.attach", "vpp.lan-control-lcp", "vpp.management-lcp":
 		return SupplementalInterfaces
+	case "vpp.nat44.egress":
+		return SupplementalRoutes
 	case "vpp.abf.policy", "vpp.pbr.policy", "vpp.service-chain.egress-binding", "vpp.proxy-service.network", "vpp.dns-service.network", "vpp.dns-transparent-interception":
 		return SupplementalRoutes
 	case "vpp.smart-qos":
@@ -244,6 +250,14 @@ func SupplementalReconciliationCleanupOperations(prior, desired Plan, owner Supp
 		if attachment, ok := operation.Payload.(NativeAttachment); ok && attachment.Tier == DataplaneTierDPDK {
 			continue
 		}
+		if egress, ok := operation.Payload.(GatewayNATEgress); ok {
+			for _, wanted := range desiredOperations {
+				if retained, ok := wanted.Payload.(GatewayNATEgress); ok && retained.Behavior == egress.Behavior {
+					egress.RetainInside = append(egress.RetainInside, retained.Inside...)
+				}
+			}
+			operation.Payload = egress
+		}
 		commands, commandErr := supplementalCleanupCommands(operation)
 		if commandErr != nil {
 			return nil, commandErr
@@ -265,10 +279,19 @@ func SupplementalReconciliationCleanupOperations(prior, desired Plan, owner Supp
 }
 
 func supplementalServiceNetworkOperations(plan Plan, owner SupplementalOwner) ([]Operation, error) {
+	if owner == SupplementalInterfaces {
+		var operations []Operation
+		for _, assignment := range plan.AddressAssignments {
+			if assignment.Mode == "dhcp4" {
+				operations = append(operations, Operation{Name: "vpp.interface.address", RequestID: plan.RequestID, Resource: assignment.ID, Payload: assignment, VPPCtlCommands: interfaceAddressCommands(assignment)})
+			}
+		}
+		return operations, nil
+	}
 	if owner != SupplementalRoutes {
 		return nil, nil
 	}
-	operations := make([]Operation, 0, len(plan.DNSServiceNetworks)+len(plan.Proxy.VPPSteering))
+	operations := gatewayNATEgressOperations(plan)
 	for _, network := range plan.DNSServiceNetworks {
 		if err := validateDNSServiceNetwork(network); err != nil {
 			return nil, err
@@ -303,6 +326,10 @@ func supplementalOperationIdentity(operation Operation) (string, error) {
 
 func supplementalCleanupCommands(operation Operation) ([]string, error) {
 	switch payload := operation.Payload.(type) {
+	case AddressAssignment:
+		return []string{fmt.Sprintf("?set dhcp client del intfc %s", payload.VPPInterface), "show dhcp client"}, nil
+	case GatewayNATEgress:
+		return gatewayNATEgressCommands(payload, true), nil
 	case NativeAttachment:
 		switch payload.Hook {
 		case NativeHookAFPacket:

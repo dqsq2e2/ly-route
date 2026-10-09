@@ -179,18 +179,26 @@ jobs:
           (cd backend && go test ./internal/httpapi -run '^TestSystemCPU')
           (cd backend && go test ./internal/httpapi -run '^TestInterfaceRolePatch')
           (cd backend && go test ./internal/httpapi -run '^TestWiFi')
+          (cd backend && go test ./internal/httpapi -run '^TestManagement')
           (cd backend && go test ./gateway ./internal/httpapi -run '^TestWANLinkRuntime|^TestRuntimeDataInterfaces')
           (cd backend && go test ./internal/runtime/vpp -run '^TestVerifySupplementalOperation')
+          (cd backend && go test ./internal/runtime/vpp -run '^TestGatewayWAN|^TestGatewayDHCP|^TestGatewayNATEgress')
+          (cd backend && go test ./internal/httpapi -run '^TestRuntimeDHCPWAN')
           node scripts/test-gateway-formatters.mjs
           node scripts/test-wan-runtime-ui.mjs
           python3 scripts/test-velo5x0-hardware.py
           python3 scripts/test-wifi-runtime.py
+          python3 scripts/test-management-network.py
+          bash scripts/test-firstboot-env-migration.sh
+          python3 scripts/test-vfio-preflight.py
           python3 scripts/test-vpp-apply-af-xdp.py
           sudo bash scripts/test-vpp-native-selection.sh
           python3 scripts/test-hotfix-serial.py
           bash scripts/test-hotfix-kernel.sh
+          bash scripts/test-velo5x0-kernel-selection.sh
           bash scripts/test-velo5x0-installer.sh
           bash packaging/hardware/velo5x0/glue/tests/check.sh
+          bash scripts/ci-release-verify.sh
       - uses: actions/cache@v5
         id: vpp-cache
         with:

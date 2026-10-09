@@ -14,6 +14,11 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ManagementNetworkTest(unittest.TestCase):
+    def test_factory_business_dhcp_is_unassigned(self):
+        document = json.loads((OVERLAY / "etc/kea/kea-dhcp4.conf").read_text(encoding="utf-8"))["Dhcp4"]
+        self.assertEqual(document["interfaces-config"]["interfaces"], [])
+        self.assertEqual(document["subnet4"], [])
+
     def business(self, pool="192.168.88.120 - 192.168.88.199"):
         return {"Dhcp4": {
             "interfaces-config": {"interfaces": ["lylan-enp0s20f3"]},

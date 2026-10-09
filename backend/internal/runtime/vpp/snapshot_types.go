@@ -53,20 +53,20 @@ type SnapshotRequest struct {
 	QoS                   []string
 	NATStaticMappings     []string
 	NATPortMappings       []string
-	NATBehavior            nat.Behavior
+	NATBehavior           nat.Behavior
 	// NATIngressVPPInterface is the resolved LAN ingress used by NAT return
 	// guards. It is carried in the snapshot request so port mappings do not
 	// depend on a process-wide environment variable.
 	NATIngressVPPInterface string
-	AbsentRoutePolicies   []string
-	AbsentWANGroups       []string
-	AbsentACLs            []string
-	AbsentQoS             []string
-	AbsentNATStatic       []string
-	AbsentNATPort         []string
-	Capabilities          []SnapshotCapability
-	ReadbackAt            time.Time
-	Candidates            SnapshotCandidates
+	AbsentRoutePolicies    []string
+	AbsentWANGroups        []string
+	AbsentACLs             []string
+	AbsentQoS              []string
+	AbsentNATStatic        []string
+	AbsentNATPort          []string
+	Capabilities           []SnapshotCapability
+	ReadbackAt             time.Time
+	Candidates             SnapshotCandidates
 }
 
 type SnapshotCandidates struct {
@@ -81,10 +81,11 @@ type SnapshotCandidates struct {
 }
 
 type InterfaceState struct {
-	Name       string   `json:"name"`
-	AdminState string   `json:"admin_state"`
-	LinkState  string   `json:"link_state"`
-	Addresses  []string `json:"addresses,omitempty"`
+	Name        string   `json:"name"`
+	AdminState  string   `json:"admin_state"`
+	LinkState   string   `json:"link_state"`
+	Addresses   []string `json:"addresses,omitempty"`
+	AddressMode string   `json:"address_mode,omitempty"`
 }
 
 type BondState struct {

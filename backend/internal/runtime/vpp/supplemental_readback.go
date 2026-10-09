@@ -28,6 +28,17 @@ func supplementalOperationHash(operation Operation) (string, error) {
 
 func verifySupplementalOperation(operation Operation, results []VPPCTLCommandResult) error {
 	switch payload := operation.Payload.(type) {
+	case AddressAssignment:
+		output, err := commandOutputLast(results, "show dhcp client")
+		if err != nil {
+			return err
+		}
+		if !gatewayDHCPClientPresent(output, payload.VPPInterface) {
+			return snapshotDecodeError("DHCP client is absent for %s", payload.VPPInterface)
+		}
+		return nil
+	case GatewayNATEgress:
+		return verifyGatewayNATEgress(payload, results)
 	case NativeAttachment:
 		if err := requireSupplementalIdentity(results, "show interface "+payload.VPPInterface, payload.VPPInterface); err != nil {
 			return err

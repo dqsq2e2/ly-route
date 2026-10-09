@@ -17,11 +17,11 @@ func interfaceContract() resourceContract[InterfaceState] {
 		kind:     "interface",
 		identity: func(state InterfaceState) string { return state.Name },
 		equal: func(left, right InterfaceState) bool {
-			return left.Name == right.Name && left.AdminState == right.AdminState && left.LinkState == right.LinkState && slices.Equal(left.Addresses, right.Addresses)
+			return left.Name == right.Name && left.AdminState == right.AdminState && left.LinkState == right.LinkState && left.AddressMode == right.AddressMode && slices.Equal(left.Addresses, right.Addresses)
 		},
 		liveMatchesDesired: InterfaceStateMatchesDesired,
 		repairInPlace: func(observed, wanted InterfaceState) (InterfaceState, bool) {
-			if !interfaceAddressesMatchDesired(observed.Addresses, wanted.Addresses) {
+			if !interfaceStateAddressesMatchDesired(observed, wanted) {
 				return InterfaceState{}, false
 			}
 			// Admin-state drift can be repaired without removing the interface or
@@ -38,13 +38,24 @@ func interfaceContract() resourceContract[InterfaceState] {
 // the static interface plan.  The PPPoE/IPv6-PD runtime owns dynamically
 // learned IPv6 addresses and RA state, so those addresses may be present in a
 // live snapshot even though they are not part of the static interface plan.
-// IPv4 remains exact: an unexpected IPv4 address is configuration drift and
-// must not be hidden by this exception.
+// IPv4 remains exact except on an explicitly DHCP-owned interface.
 func InterfaceStateMatchesDesired(observed, wanted InterfaceState) bool {
 	return observed.Name == wanted.Name &&
 		observed.AdminState == wanted.AdminState &&
 		observed.LinkState == wanted.LinkState &&
-		interfaceAddressesMatchDesired(observed.Addresses, wanted.Addresses)
+		interfaceStateAddressesMatchDesired(observed, wanted)
+}
+
+func interfaceStateAddressesMatchDesired(observed, wanted InterfaceState) bool {
+	if wanted.AddressMode == "dhcp4" {
+		for _, address := range observed.Addresses {
+			if _, ok := parseInterfacePrefix(address); !ok {
+				return false
+			}
+		}
+		return len(normalizedInterfaceAddresses(wanted.Addresses)) == 0
+	}
+	return interfaceAddressesMatchDesired(observed.Addresses, wanted.Addresses)
 }
 
 // InterfaceStatesMatchDesired is the evidence-level slice comparison.  VPP

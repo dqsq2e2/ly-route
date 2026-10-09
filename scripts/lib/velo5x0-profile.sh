@@ -30,10 +30,30 @@ install_velo5x0_overlay() {
 
 velo5x0_kernel_deb() {
   directory=${LY_ROUTE_KERNEL_DEBS_DIR:?LY_ROUTE_KERNEL_DEBS_DIR is required for velo5x0}
-  set -- "$directory"/linux-image-*-velo5x0_*.deb
+  set -- "$directory"/linux-image-*-velo5x0*.deb
   [ "$#" -eq 1 ] && [ -s "$1" ] || {
     echo "expected one 5x0 kernel package in $directory" >&2
     return 1
   }
+  package=$(dpkg-deb -f "$1" Package) || return 1
+  architecture=$(dpkg-deb -f "$1" Architecture) || return 1
+  [ "$architecture" = amd64 ] || {
+    echo "5x0 kernel package must target amd64: $1" >&2
+    return 1
+  }
+  case "$package" in
+    linux-image-*-velo5x0) ;;
+    linux-image-*-velo5x0-r*)
+      revision=${package##*-velo5x0-r}
+      case "$revision" in
+        ''|*[!0-9]*) echo "invalid 5x0 kernel revision: $package" >&2; return 1 ;;
+      esac
+      ;;
+    *) echo "invalid 5x0 kernel package identity: $package" >&2; return 1 ;;
+  esac
+  case "${1##*/}" in
+    "$package"_*_"$architecture".deb) ;;
+    *) echo "5x0 kernel filename does not match package identity: $1" >&2; return 1 ;;
+  esac
   printf '%s\n' "$1"
 }

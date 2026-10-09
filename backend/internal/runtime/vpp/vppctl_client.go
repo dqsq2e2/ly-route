@@ -74,6 +74,9 @@ const (
 
 func (channel vppctlChannel) Do(ctx context.Context, operation Operation) (Reply, error) {
 	operation = rewriteOperationLANInterface(operation, channel.lanVPPInterface)
+	if assignment, ok := operation.Payload.(AddressAssignment); ok && assignment.Mode == "dhcp4" {
+		return channel.doGatewayDHCPClient(ctx, operation, assignment)
+	}
 	if channel.dynamicACL && operation.Name == "vpp.security-acl.snapshot" {
 		operation.VPPCtlCommands = []string{"show acl-plugin acl"}
 	}

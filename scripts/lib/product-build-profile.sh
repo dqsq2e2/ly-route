@@ -101,6 +101,7 @@ catch { console.error("Frontend bundle capabilities must be valid JSON"); proces
 const canonical = JSON.parse(readFileSync(canonicalPath, "utf8"));
 const marker = `window.LY_ROUTE_PRODUCT_ENTRYPOINT = "${product}";`;
 const expectedFiles = ["app.js", "capabilities.json", "index.html", "shell.js", "styles.css"];
+if (product === "gateway") expectedFiles.push("commercial.css");
 if (product === "orchestrator") expectedFiles.push("product.css");
 expectedFiles.sort();
 const actualFiles = readdirSync(bundlePath, { withFileTypes: true })

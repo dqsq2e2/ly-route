@@ -62,6 +62,7 @@ type AddressAssignment struct {
 	VPPInterface   string   `json:"vpp_interface"`
 	CIDR           string   `json:"cidr"`
 	Mode           string   `json:"mode,omitempty"`
+	NAT            bool     `json:"nat,omitempty"`
 	RemoveCIDRs    []string `json:"remove_cidrs,omitempty"`
 	Role           string   `json:"role,omitempty"`
 	BandwidthKbps  uint64   `json:"bandwidth_kbps,omitempty"`
@@ -349,6 +350,7 @@ func BuildOperations(plan Plan) ([]Operation, error) {
 			VPPCtlCommands: natInitializeCommands(plan.NAT.Behavior),
 		})
 	}
+	operations = append(operations, gatewayNATEgressOperations(plan)...)
 	// VPPGroups are the executable, deduplicated representation of Targets.
 	// Executing both creates the same ACL/policer twice for matched rules.
 	for _, mapping := range plan.NAT.StaticMappings {

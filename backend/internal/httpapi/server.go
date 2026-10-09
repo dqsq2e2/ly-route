@@ -3678,10 +3678,10 @@ func (server *Server) runtimeAddressAssignments(ctx context.Context) ([]vpp.Addr
 			removeStaticCIDRs[linuxInterface] = appendUniqueString(removeStaticCIDRs[linuxInterface], parsedCIDR)
 			continue
 		}
-		assignments = append(assignments, vpp.AddressAssignment{ID: nonEmpty(stringField(item, "id"), linuxInterface), LinuxInterface: linuxInterface, VPPInterface: vppInterfaceName(linuxInterface), CIDR: parsedCIDR, Role: "wan", BandwidthKbps: smartQoSBandwidthKbps(item, "wan")})
+		assignments = append(assignments, vpp.AddressAssignment{ID: nonEmpty(stringField(item, "id"), linuxInterface), LinuxInterface: linuxInterface, VPPInterface: vppInterfaceName(linuxInterface), CIDR: parsedCIDR, Role: "wan", NAT: truthy(item["nat"]), BandwidthKbps: smartQoSBandwidthKbps(item, "wan")})
 	}
 	for linuxInterface, item := range dhcpWANs {
-		assignments = append(assignments, vpp.AddressAssignment{ID: nonEmpty(stringField(item, "id"), linuxInterface), LinuxInterface: linuxInterface, VPPInterface: vppInterfaceName(linuxInterface), Mode: "dhcp4", RemoveCIDRs: removeStaticCIDRs[linuxInterface], Role: "wan", BandwidthKbps: smartQoSBandwidthKbps(item, "wan")})
+		assignments = append(assignments, vpp.AddressAssignment{ID: nonEmpty(stringField(item, "id"), linuxInterface), LinuxInterface: linuxInterface, VPPInterface: vppInterfaceName(linuxInterface), Mode: "dhcp4", RemoveCIDRs: removeStaticCIDRs[linuxInterface], Role: "wan", NAT: truthy(item["nat"]), BandwidthKbps: smartQoSBandwidthKbps(item, "wan")})
 	}
 	if server.managementNetworkShared(ctx) {
 		management := server.managementNetworkState(ctx, false)
@@ -5284,7 +5284,11 @@ func (server *Server) buildRuntimePlanFromConfig(ctx context.Context, requestID 
 	}
 	gatewayInterfaces := make([]vpp.InterfaceState, 0, len(addressAssignments))
 	for _, assignment := range addressAssignments {
-		gatewayInterfaces = append(gatewayInterfaces, vpp.InterfaceState{Name: assignment.VPPInterface, AdminState: "up", LinkState: "up", Addresses: []string{assignment.CIDR}})
+		state := vpp.InterfaceState{Name: assignment.VPPInterface, AdminState: "up", LinkState: "up", AddressMode: assignment.Mode}
+		if strings.TrimSpace(assignment.CIDR) != "" {
+			state.Addresses = []string{assignment.CIDR}
+		}
+		gatewayInterfaces = append(gatewayInterfaces, state)
 	}
 	gatewayPlan := canonicalGatewayPlan
 	gatewayPlan.Interfaces = gatewayInterfaces
